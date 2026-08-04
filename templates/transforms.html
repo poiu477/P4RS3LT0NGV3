@@ -899,7 +899,7 @@
                                             <div v-else class="recipe-special-stage">
                                                 <label class="transform-options-field">
                                                     Language
-                                                    <select v-model="stagedDraft.stages.translate.lang" class="transform-options-select">
+                                                    <select v-model="stagedDraft.stages.translate.lang" class="transform-options-select" @change="clearRecipeTemplateSelection">
                                                         <optgroup label="Major languages">
                                                             <option v-for="lang in translateMainLangs" :key="lang.code" :value="lang.code">{{ lang.name }}</option>
                                                         </optgroup>
@@ -911,7 +911,7 @@
                                                         </optgroup>
                                                     </select>
                                                 </label>
-                                                <openrouter-model-select v-model="stagedDraft.stages.translate.model" label="Translation model"></openrouter-model-select>
+                                                <openrouter-model-select v-model="stagedDraft.stages.translate.model" label="Translation model" @input="clearRecipeTemplateSelection"></openrouter-model-select>
                                                 <span class="chain-badge chain-badge-ai-only">AI / not mechanically reversible</span>
                                                 <button type="button" class="recipe-stage-remove" @click="stagedSetTranslateEnabled(false)">Remove Translate</button>
                                             </div>
@@ -923,10 +923,36 @@
                                                 <label><input type="radio" name="recipe-carrier" value="qr" :checked="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'qr'" @change="stagedSetCarrier('qr')" /> QR</label>
                                                 <label><input type="radio" name="recipe-carrier" value="emoji_stego" :checked="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" @change="stagedSetCarrier('emoji_stego')" /> Emoji stego</label>
                                             </div>
-                                            <label v-if="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" class="transform-options-field">
-                                                Carrier emoji
-                                                <input type="text" v-model="stagedDraft.stages.carrier.options.carrierEmoji" class="transform-options-text recipe-emoji-input" maxlength="16" />
-                                            </label>
+                                            <div v-if="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" class="recipe-carrier-picker carrier-quick-grid">
+                                                <span class="recipe-section-label">Carrier emoji</span>
+                                                <div class="emoji-grid" role="group" aria-label="Quick carrier emoji choices">
+                                                    <button
+                                                        v-for="carrier in recipeCarrierChoices().slice(0, 10)"
+                                                        :key="carrier.emoji"
+                                                        type="button"
+                                                        class="emoji-button"
+                                                        :class="{ selected: stagedDraft.stages.carrier.options.carrierEmoji === carrier.emoji }"
+                                                        :title="'Use ' + carrier.name"
+                                                        :aria-label="'Use ' + carrier.name + ' carrier'"
+                                                        @click="stagedSetCarrierEmoji(carrier.emoji)"
+                                                    >
+                                                        {{ carrier.emoji }}
+                                                    </button>
+                                                </div>
+                                                <label class="transform-options-field">
+                                                    All carriers
+                                                    <select
+                                                        class="transform-options-select recipe-emoji-input"
+                                                        :value="stagedDraft.stages.carrier.options.carrierEmoji"
+                                                        aria-label="Emoji steganography carrier"
+                                                        @change="stagedSetCarrierEmoji($event.target.value)"
+                                                    >
+                                                        <option v-for="carrier in recipeCarrierChoices()" :key="carrier.emoji" :value="carrier.emoji">
+                                                            {{ carrier.emoji }} {{ carrier.name }}
+                                                        </option>
+                                                    </select>
+                                                </label>
+                                            </div>
                                         </template>
 
                                         <template v-else>
@@ -967,7 +993,7 @@
                                                 {{ stagedStageNodes(stageId).length ? 'Add another' : 'Add ' + recipeStageLabel(stageId) }}
                                             </button>
                                             <div v-if="stagedPickerStage === stageId" class="chain-node-picker recipe-stage-picker">
-                                                <input type="search" v-model="stagedPickerQuery" :placeholder="'Search ' + recipeStageLabel(stageId).toLowerCase() + ' transforms...'" autocomplete="off" spellcheck="false" />
+                                                <input type="search" v-model="stagedPickerQuery" :placeholder="'Search ' + recipeStageLabel(stageId).toLowerCase() + ' transforms...'" :aria-label="'Search transforms for ' + recipeStageLabel(stageId) + ' stage'" autocomplete="off" spellcheck="false" />
                                                 <div class="chain-node-picker-results">
                                                     <button v-for="candidate in stagedNodeCandidates(stageId)" :key="candidate.key" type="button" class="chain-node-picker-result" @click="stagedAddNode(stageId, candidate.key)">
                                                         <i class="fas fa-plus"></i> {{ candidate.name }}
@@ -1126,6 +1152,9 @@
                                         <div class="chain-node-row">
                                             <span class="chain-node-index">{{ index + 1 }}</span>
                                             <span class="chain-node-name">{{ cycleChainName(chainId) }}</span>
+                                            <span v-if="cycleDraftMode === 'word_safe' && !cycleChainIsWordSafe(chainId)" class="chain-badge chain-badge-ai-only">
+                                                Not word-safe
+                                            </span>
                                             <span class="chain-node-controls">
                                                 <button type="button" class="chain-action-btn" :disabled="index === 0" @click="cycleMoveChainRef(index, -1)" title="Move up">
                                                     <i class="fas fa-arrow-up"></i>
@@ -1149,7 +1178,14 @@
                                     Add chain to rotation
                                     <select class="transform-options-select" @change="cycleAddChainRef($event.target.value); $event.target.value = ''">
                                         <option value="">Select a chain…</option>
-                                        <option v-for="chain in savedChains()" :key="chain.id" :value="chain.id">{{ chain.name }}</option>
+                                        <option
+                                            v-for="chain in savedChains()"
+                                            :key="chain.id"
+                                            :value="chain.id"
+                                            :disabled="cycleDraftMode === 'word_safe' && !cycleRecipeIsWordSafe(chain)"
+                                        >
+                                            {{ chain.name }}{{ cycleDraftMode === 'word_safe' && !cycleRecipeIsWordSafe(chain) ? ' — not word-safe' : '' }}
+                                        </option>
                                     </select>
                                 </label>
 

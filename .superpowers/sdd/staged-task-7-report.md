@@ -25,3 +25,11 @@ Complete. The Transform manager now defaults to a staged recipe builder while re
 
 - Interactive browser coverage is intentionally deferred to Task 9 per the brief.
 - `index.html` is generated but untracked in this repository, so no rebuilt generated output is included.
+
+## Spec Review Follow-up
+
+- Replaced the emoji-stego free-text-only control with quick-pick buttons and a carrier select sourced from `window.steganography.carriers`.
+- Template chips now clear their selected state whenever a staged field, node, option, Translate setting, or carrier changes.
+- Added an accessible stage-specific label to every filtered transform search field.
+- Word-safe cycle mode now disables unsafe recipes in the add selector and flags unsafe members already in the draft.
+- Re-ran `npm run build:templates` and `npm run test:all`; both passed.

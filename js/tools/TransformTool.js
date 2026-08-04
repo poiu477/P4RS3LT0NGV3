@@ -353,6 +353,14 @@ class TransformTool extends Tool {
                 const chain = this.savedChains().find(c => c.id === chainId);
                 return chain ? chain.name : '(deleted chain)';
             },
+            cycleRecipeIsWordSafe: function(chain) {
+                return !!(window.TransformChains &&
+                    typeof window.TransformChains.recipeIsWordSafe === 'function' &&
+                    window.TransformChains.recipeIsWordSafe(chain));
+            },
+            cycleChainIsWordSafe: function(chainId) {
+                return this.cycleRecipeIsWordSafe(this.savedChains().find(chain => chain.id === chainId));
+            },
             recipeHasCarrier: function(recipe) {
                 return !!(recipe && recipe.kind === 'staged' && recipe.stages && recipe.stages.carrier);
             },
@@ -395,6 +403,18 @@ class TransformTool extends Tool {
             },
             recipeTemplates: function() {
                 return window.TransformRecipeStages ? window.TransformRecipeStages.TEMPLATES : [];
+            },
+            recipeCarrierChoices: function() {
+                const carriers = window.steganography && Array.isArray(window.steganography.carriers)
+                    ? window.steganography.carriers
+                    : [];
+                return carriers.map(carrier => ({
+                    emoji: carrier.emoji,
+                    name: carrier.name || carrier.emoji
+                }));
+            },
+            clearRecipeTemplateSelection: function() {
+                this.recipeTemplateId = '';
             },
             openRecipeBuilder: function(existing) {
                 this.chainBuilderKind = 'chain';
@@ -459,6 +479,7 @@ class TransformTool extends Tool {
                 const nodes = this.stagedStageNodes(stageId).slice();
                 nodes.push({ transform: key, options });
                 this.$set(this.stagedDraft.stages, stageId, nodes);
+                this.clearRecipeTemplateSelection();
                 this.stagedPickerQuery = '';
                 this.chainBuilderError = '';
             },
@@ -466,6 +487,7 @@ class TransformTool extends Tool {
                 const nodes = this.stagedStageNodes(stageId).slice();
                 nodes.splice(index, 1);
                 this.$set(this.stagedDraft.stages, stageId, nodes.length ? nodes : null);
+                this.clearRecipeTemplateSelection();
                 this.stagedOpenNodeOptions = null;
             },
             stagedMoveNode: function(stageId, index, direction) {
@@ -475,6 +497,7 @@ class TransformTool extends Tool {
                 const node = nodes.splice(index, 1)[0];
                 nodes.splice(target, 0, node);
                 this.$set(this.stagedDraft.stages, stageId, nodes);
+                this.clearRecipeTemplateSelection();
                 this.stagedOpenNodeOptions = null;
             },
             stagedToggleNodeOptions: function(stageId, index) {
@@ -489,17 +512,28 @@ class TransformTool extends Tool {
             },
             stagedSetNodeOption: function(stageId, index, optId, value) {
                 const node = this.stagedStageNodes(stageId)[index];
-                if (node) this.$set(node.options, optId, value);
+                if (node) {
+                    this.$set(node.options, optId, value);
+                    this.clearRecipeTemplateSelection();
+                }
             },
             stagedSetTranslateEnabled: function(enabled) {
                 this.$set(this.stagedDraft.stages, 'translate', enabled
                     ? { type: 'translate', lang: 'la', model: this.translateModel || '' }
                     : null);
+                this.clearRecipeTemplateSelection();
             },
             stagedSetCarrier: function(type) {
                 this.$set(this.stagedDraft.stages, 'carrier', type
                     ? { type, options: type === 'emoji_stego' ? { carrierEmoji: '🐍' } : {} }
                     : null);
+                this.clearRecipeTemplateSelection();
+            },
+            stagedSetCarrierEmoji: function(emoji) {
+                const carrier = this.stagedDraft.stages.carrier;
+                if (!carrier || carrier.type !== 'emoji_stego') return;
+                this.$set(carrier.options, 'carrierEmoji', emoji);
+                this.clearRecipeTemplateSelection();
             },
             saveStagedRecipe: function() {
                 const draft = {
