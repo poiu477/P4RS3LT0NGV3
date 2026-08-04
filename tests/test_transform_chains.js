@@ -72,11 +72,16 @@ assert.deepStrictEqual(Object.keys(chains[0].nodes[1].options), []);
 // nesting reject
 TC.syncTransforms();
 const beforeNestedChains = JSON.stringify(TC.loadChains());
+const beforeNestedChainStorage = ctx.localStorage.getItem('transform-chains-v1');
 const nested = TC.saveChain({
     name: 'Bad',
     nodes: [{ transform: 'chain_' + id, options: {} }]
 });
 assert.strictEqual(nested, null);
+assert.strictEqual(
+    ctx.localStorage.getItem('transform-chains-v1'),
+    beforeNestedChainStorage
+);
 assert.strictEqual(JSON.stringify(TC.loadChains()), beforeNestedChains);
 
 // describe includes options
@@ -86,7 +91,12 @@ assert.ok(recipe.indexOf('"shift":3') !== -1 || recipe.indexOf('"shift": 3') !==
 
 // cycle validation
 const beforeEmptyCycle = JSON.stringify(TC.loadCycles());
+const beforeEmptyCycleStorage = ctx.localStorage.getItem('transform-cycles-v1');
 assert.strictEqual(TC.saveCycle({ name: 'C', chainIds: [] }), null);
+assert.strictEqual(
+    ctx.localStorage.getItem('transform-cycles-v1'),
+    beforeEmptyCycleStorage
+);
 assert.strictEqual(JSON.stringify(TC.loadCycles()), beforeEmptyCycle);
 const cyId = TC.saveCycle({ name: 'C', chainIds: [id] });
 assert.ok(cyId);
