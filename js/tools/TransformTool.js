@@ -515,6 +515,7 @@ class TransformTool extends Tool {
                     return;
                 }
                 this.refreshChainsTransforms();
+                this.pruneFavoritesForMissingTransforms();
                 this.showNotification('Chain deleted', 'success', 'fas fa-trash');
             },
             deleteSavedCycle: function(cycle) {
@@ -529,6 +530,7 @@ class TransformTool extends Tool {
                     return;
                 }
                 this.refreshChainsTransforms();
+                this.pruneFavoritesForMissingTransforms();
                 this.showNotification('Cycle deleted', 'success', 'fas fa-trash');
             },
 
@@ -969,6 +971,22 @@ class TransformTool extends Tool {
                     console.warn('Failed to save favorites:', e);
                 }
             },
+            pruneFavoritesForMissingTransforms: function() {
+                if (!Array.isArray(this.favorites) || !this.favorites.length) return;
+                const names = {};
+                (this.transforms || []).forEach(function(t) {
+                    if (t && t.name) names[t.name] = true;
+                });
+                const next = this.favorites.filter(function(f) {
+                    if (typeof f === 'string') return !!names[f];
+                    return true; // keep translate favorites objects
+                });
+                if (next.length !== this.favorites.length) {
+                    this.favorites = next;
+                    this.showFavorites = next.length > 0;
+                    this.saveFavorites(next);
+                }
+            },
             moveCategoryUp: function(categoryIndex) {
                 if (categoryIndex <= 0) return;
                 
@@ -1061,6 +1079,7 @@ class TransformTool extends Tool {
                         this.transformOutput = '';
                     }
                 }
+                this.pruneFavoritesForMissingTransforms();
             },
         };
     }
