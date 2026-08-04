@@ -267,9 +267,58 @@
         });
     }
 
-    /** Walk every staged node in flatten order, awaiting AI-backed stages. */
+    function clampNumber(value, fallback, min, max) {
+        var number = Number(value);
+        if (!isFinite(number)) number = fallback;
+        return Math.max(min, Math.min(max, number));
+    }
+
+    /**
+     * Wrap transformed text in the recipe's final carrier.
+     * QR options mirror CodesTool; encodeEmoji uses its actual (emoji, text) signature.
+     */
+    function applyCarrier(carrierNode, text) {
+        if (!carrierNode) {
+            return Promise.resolve({ kind: 'text', value: String(text) });
+        }
+        var options = carrierNode.options || {};
+        if (carrierNode.type === 'qr') {
+            if (!global.QRCode || typeof global.QRCode.toDataURL !== 'function') {
+                return Promise.reject(new Error('QR library not loaded. Rebuild the app (npm run build).'));
+            }
+            var widthValue = options.width != null ? options.width : options.size;
+            var marginValue = options.margin != null ? options.margin : 2;
+            return global.QRCode.toDataURL(String(text), {
+                width: clampNumber(widthValue, 256, 128, 1024),
+                margin: clampNumber(marginValue, 2, 0, 20),
+                errorCorrectionLevel: options.errorCorrectionLevel || options.ecl || 'M'
+            }).then(function(dataUrl) {
+                return { kind: 'image', value: dataUrl };
+            });
+        }
+        if (carrierNode.type === 'emoji_stego') {
+            if (!global.steganography || typeof global.steganography.encodeEmoji !== 'function') {
+                return Promise.reject(new Error('Emoji steganography library not loaded.'));
+            }
+            var carrierEmoji = options.carrierEmoji || options.carrier || carrierNode.carrierEmoji || '🐍';
+            return Promise.resolve().then(function() {
+                return {
+                    kind: 'text',
+                    value: global.steganography.encodeEmoji(carrierEmoji, String(text))
+                };
+            });
+        }
+        return Promise.reject(new Error('Unsupported carrier type: ' + carrierNode.type));
+    }
+
+    /** Walk every text stage in flatten order, then apply the final carrier. */
     function runStagedRecipeAsync(recipe, text, opts) {
-        return getStagedNodes(recipe).reduce(function(pending, node) {
+        var stages = (recipe && recipe.stages) || {};
+        var carrierNode = stages.carrier || null;
+        var textNodes = getStagedNodes(recipe).filter(function(node) {
+            return node !== carrierNode;
+        });
+        return textNodes.reduce(function(pending, node) {
             return pending.then(function(acc) {
                 if (node && node.type === 'translate') {
                     return runTranslateNode(node, acc, opts);
@@ -279,7 +328,9 @@
                 }
                 return acc;
             });
-        }, Promise.resolve(text));
+        }, Promise.resolve(text)).then(function(value) {
+            return applyCarrier(carrierNode, value);
+        });
     }
 
     function getRunnableChainNodes(chain) {
@@ -738,6 +789,7 @@
         smartWordSplit: smartWordSplit,
         runChainNodes: runChainNodes,
         runStagedRecipeSync: runStagedRecipeSync,
+        applyCarrier: applyCarrier,
         runStagedRecipeAsync: runStagedRecipeAsync,
         reverseChainNodes: reverseChainNodes,
         runCycle: runCycle,

@@ -181,7 +181,11 @@ const asyncRecipe = {
 };
 
 TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
-    assert.strictEqual(result, '[OD]Khoor', 'translation runs before Caesar');
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(result)),
+        { kind: 'text', value: '[OD]Khoor' },
+        'translation runs before Caesar and returns a typed result'
+    );
     assert.strictEqual(translateCalls.length, 1);
     assert.strictEqual(translateCalls[0].opts.model, 'test::translate');
     assert.strictEqual(Array.isArray(translateCalls[0].messages), true);
@@ -189,6 +193,80 @@ TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
         /English \(en\) to Latin \(la\) translator/);
     assert.match(translateCalls[0].messages[translateCalls[0].messages.length - 1].content,
         /Please translate the following English text into Latin:\n\nHello$/);
+    const qrCalls = [];
+    ctx.QRCode = {
+        toDataURL: (text, options) => {
+            qrCalls.push({ text, options });
+            return Promise.resolve('data:image/png;base64,mocked');
+        }
+    };
+    return TC.applyCarrier({
+        type: 'qr',
+        options: { width: 512, margin: 4, errorCorrectionLevel: 'H' }
+    }, 'secret').then((qrResult) => {
+        assert.deepStrictEqual(
+            JSON.parse(JSON.stringify(qrResult)),
+            { kind: 'image', value: 'data:image/png;base64,mocked' }
+        );
+        assert.deepStrictEqual(
+            JSON.parse(JSON.stringify(qrCalls)),
+            [{
+                text: 'secret',
+                options: { width: 512, margin: 4, errorCorrectionLevel: 'H' }
+            }]
+        );
+
+        const emojiCalls = [];
+        ctx.steganography = {
+            encodeEmoji: (emoji, text) => {
+                emojiCalls.push({ emoji, text });
+                return emoji + ':' + text;
+            }
+        };
+        return TC.applyCarrier({
+            type: 'emoji_stego',
+            options: { carrier: '😀' }
+        }, 'hidden').then((emojiResult) => {
+            assert.deepStrictEqual(
+                JSON.parse(JSON.stringify(emojiResult)),
+                { kind: 'text', value: '😀:hidden' }
+            );
+            assert.deepStrictEqual(
+                JSON.parse(JSON.stringify(emojiCalls)),
+                [{ emoji: '😀', text: 'hidden' }]
+            );
+
+            const qrRecipe = {
+                kind: 'staged',
+                stages: {
+                    normalize: null,
+                    translate: null,
+                    obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
+                    present: null,
+                    conceal: null,
+                    carrier: { type: 'qr', options: {} }
+                }
+            };
+            return TC.runStagedRecipeAsync(qrRecipe, 'Hello').then((result) => ({
+                result,
+                qrCalls
+            }));
+        });
+    });
+}).then(({ result, qrCalls }) => {
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(result)),
+        { kind: 'image', value: 'data:image/png;base64,mocked' },
+        'runner applies the carrier after text transforms'
+    );
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(qrCalls[1])),
+        {
+            text: 'Khoor',
+            options: { width: 256, margin: 2, errorCorrectionLevel: 'M' }
+        },
+        'QR receives transformed text and CodesTool defaults'
+    );
     console.log('test_transform_recipes: OK');
 }).catch((err) => {
     console.error(err);
