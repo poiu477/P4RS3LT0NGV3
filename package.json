@@ -20,7 +20,8 @@
     "test:universal": "node tests/test_universal.js",
     "test:steg": "node tests/test_steganography_options.js",
     "test:chains": "node tests/test_transform_chains.js",
-    "test:all": "npm run test:universal && npm run test:steg && npm run test:lexeme && npm run test:lexeme-ui && npm run test:chains",
+    "test:recipes": "node tests/test_transform_recipes.js",
+    "test:all": "npm run test:universal && npm run test:steg && npm run test:lexeme && npm run test:lexeme-ui && npm run test:chains && npm run test:recipes",
     "precommit": "npm run test:all"
   },
   "repository": {
