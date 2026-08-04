@@ -56,7 +56,25 @@ class TransformTool extends Tool {
             transformOptionsModalTransform: null,
             transformOptionsDraft: {},
             transformSearchQuery: '',
-            transformCategoryFilter: ''
+            transformCategoryFilter: '',
+
+            // Chain / cycle builder
+            chainManageOpen: false,
+            chainBuilderOpen: false,
+            chainBuilderKind: 'chain', // 'chain' | 'cycle'
+            chainBuilderEditId: null,
+            chainBuilderError: '',
+            chainDraftName: '',
+            chainDraftNodes: [],
+            chainNodePickerQuery: '',
+            chainOpenNodeOptionsIndex: null,
+            cycleDraftName: '',
+            cycleDraftChainIds: [],
+            chainDecodeOpenKey: '',
+            chainDecodeInput: '',
+            chainDecodeOutput: '',
+            chainDecodeLoading: false,
+            chainDecodeError: ''
         };
     }
 
@@ -289,6 +307,240 @@ class TransformTool extends Tool {
                     return window.getMergedTransformOptionsForName(transformName, this.transforms);
                 }
                 return {};
+            },
+
+            // ---- Chains & cycles -------------------------------------------
+
+            savedChains: function() {
+                return window.TransformChains ? window.TransformChains.loadChains() : [];
+            },
+            savedCycles: function() {
+                return window.TransformChains ? window.TransformChains.loadCycles() : [];
+            },
+            chainRegisteredEntry: function(chain) {
+                return window.transforms && window.transforms[window.TransformChains.CHAIN_PREFIX + chain.id];
+            },
+            cycleRegisteredEntry: function(cycle) {
+                return window.transforms && window.transforms[window.TransformChains.CYCLE_PREFIX + cycle.id];
+            },
+            chainIsReversibleNow: function(chain) {
+                const entry = this.chainRegisteredEntry(chain);
+                return !!(entry && entry.canDecode);
+            },
+            cycleIsReversibleNow: function(cycle) {
+                const entry = this.cycleRegisteredEntry(cycle);
+                return !!(entry && entry.canDecode);
+            },
+            cycleChainName: function(chainId) {
+                const chain = this.savedChains().find(c => c.id === chainId);
+                return chain ? chain.name : '(deleted chain)';
+            },
+            refreshChainsTransforms: function() {
+                // Same rebuild custom spelling alphabets use after a CRUD change —
+                // generic over window.transforms, not spelling-specific.
+                if (typeof this.refreshCustomSpellingTransforms === 'function') {
+                    this.refreshCustomSpellingTransforms();
+                }
+            },
+
+            // -- chain (node sequence) builder --
+
+            chainNodeCandidates: function() {
+                if (!window.transforms) return [];
+                const query = (this.chainNodePickerQuery || '').trim().toLowerCase();
+                return Object.keys(window.transforms)
+                    .map(key => ({ key, t: window.transforms[key] }))
+                    .filter(({ t }) => t && t.name && !t.isChain && !t.isCycle)
+                    .filter(({ t }) => !query || t.name.toLowerCase().indexOf(query) !== -1)
+                    .sort((a, b) => a.t.name.localeCompare(b.t.name))
+                    .slice(0, 40)
+                    .map(({ key, t }) => ({ key, name: t.name, category: t.category }));
+            },
+            openChainBuilder: function(existing) {
+                this.chainBuilderKind = 'chain';
+                this.chainBuilderEditId = existing ? existing.id : null;
+                this.chainDraftName = existing ? existing.name : '';
+                this.chainDraftNodes = existing ? JSON.parse(JSON.stringify(existing.nodes || [])) : [];
+                this.chainNodePickerQuery = '';
+                this.chainOpenNodeOptionsIndex = null;
+                this.chainBuilderError = '';
+                this.chainBuilderOpen = true;
+            },
+            chainAddNode: function(key) {
+                const t = window.transforms[key];
+                if (!t) return;
+                const options = {};
+                (t.configurableOptions || []).forEach(opt => { options[opt.id] = opt.default; });
+                this.chainDraftNodes.push({ transform: key, options });
+                this.chainNodePickerQuery = '';
+            },
+            chainRemoveNode: function(index) {
+                this.chainDraftNodes.splice(index, 1);
+                if (this.chainOpenNodeOptionsIndex === index) {
+                    this.chainOpenNodeOptionsIndex = null;
+                }
+            },
+            chainMoveNode: function(index, direction) {
+                const target = index + direction;
+                if (target < 0 || target >= this.chainDraftNodes.length) return;
+                const nodes = this.chainDraftNodes.slice();
+                const tmp = nodes[index];
+                nodes.splice(index, 1);
+                nodes.splice(target, 0, tmp);
+                this.chainDraftNodes = nodes;
+                if (this.chainOpenNodeOptionsIndex === index) {
+                    this.chainOpenNodeOptionsIndex = target;
+                }
+            },
+            chainToggleNodeOptions: function(index) {
+                this.chainOpenNodeOptionsIndex = this.chainOpenNodeOptionsIndex === index ? null : index;
+            },
+            chainNodeName: function(node) {
+                const t = window.transforms && window.transforms[node.transform];
+                return t ? t.name : node.transform + ' (missing)';
+            },
+            chainNodeOptionFields: function(node) {
+                const t = window.transforms && window.transforms[node.transform];
+                return (t && t.configurableOptions) || [];
+            },
+            chainSetNodeOption: function(index, optId, value) {
+                this.$set(this.chainDraftNodes[index].options, optId, value);
+            },
+            chainDraftPreviewSteps: function() {
+                if (!window.TransformChains) return [];
+                const sample = (this.transformInput || 'Hello World').slice(0, 60);
+                return window.TransformChains.previewSteps(this.chainDraftNodes, sample);
+            },
+            saveChainDraft: function() {
+                const name = (this.chainDraftName || '').trim();
+                if (!name) {
+                    this.chainBuilderError = 'Name is required.';
+                    return;
+                }
+                if (!this.chainDraftNodes.length) {
+                    this.chainBuilderError = 'Add at least one transform to the chain.';
+                    return;
+                }
+                const id = window.TransformChains.saveChain({
+                    id: this.chainBuilderEditId,
+                    name,
+                    nodes: this.chainDraftNodes
+                });
+                if (!id) {
+                    this.chainBuilderError = 'Could not save — a chain cannot reference itself or another saved chain/cycle.';
+                    return;
+                }
+                this.chainBuilderOpen = false;
+                this.refreshChainsTransforms();
+                this.showNotification('Chain saved — find it on the Transforms page under chains', 'success', 'fas fa-link');
+            },
+
+            // -- cycle (per-word rotation) builder --
+
+            openCycleBuilder: function(existing) {
+                this.chainBuilderKind = 'cycle';
+                this.chainBuilderEditId = existing ? existing.id : null;
+                this.cycleDraftName = existing ? existing.name : '';
+                this.cycleDraftChainIds = existing ? existing.chainIds.slice() : [];
+                this.chainBuilderError = '';
+                this.chainBuilderOpen = true;
+            },
+            cycleAddChainRef: function(chainId) {
+                if (!chainId) return;
+                this.cycleDraftChainIds.push(chainId);
+            },
+            cycleRemoveChainRef: function(index) {
+                this.cycleDraftChainIds.splice(index, 1);
+            },
+            cycleMoveChainRef: function(index, direction) {
+                const target = index + direction;
+                if (target < 0 || target >= this.cycleDraftChainIds.length) return;
+                const ids = this.cycleDraftChainIds.slice();
+                const tmp = ids[index];
+                ids.splice(index, 1);
+                ids.splice(target, 0, tmp);
+                this.cycleDraftChainIds = ids;
+            },
+            cycleDraftPreview: function() {
+                if (!window.TransformChains || !this.cycleDraftChainIds.length) return '';
+                const chains = this.cycleDraftChainIds
+                    .map(id => this.savedChains().find(c => c.id === id))
+                    .filter(Boolean);
+                if (!chains.length) return '';
+                const sample = this.transformInput || 'Hello World Foo Bar';
+                try {
+                    return window.TransformChains.runCycle(chains, sample, false);
+                } catch (e) {
+                    return '(preview failed: ' + e.message + ')';
+                }
+            },
+            saveCycleDraft: function() {
+                const name = (this.cycleDraftName || '').trim();
+                if (!name) {
+                    this.chainBuilderError = 'Name is required.';
+                    return;
+                }
+                if (!this.cycleDraftChainIds.length) {
+                    this.chainBuilderError = 'Add at least one chain to rotate through.';
+                    return;
+                }
+                const id = window.TransformChains.saveCycle({
+                    id: this.chainBuilderEditId,
+                    name,
+                    chainIds: this.cycleDraftChainIds
+                });
+                if (!id) {
+                    this.chainBuilderError = 'Could not save cycle.';
+                    return;
+                }
+                this.chainBuilderOpen = false;
+                this.refreshChainsTransforms();
+                this.showNotification('Cycle saved — find it on the Transforms page under chains', 'success', 'fas fa-repeat');
+            },
+
+            closeChainBuilder: function() {
+                this.chainBuilderOpen = false;
+                this.chainBuilderError = '';
+            },
+            deleteSavedChain: function(chain) {
+                if (!window.confirm('Delete chain "' + chain.name + '"? Any cycle using it will drop the reference.')) return;
+                window.TransformChains.deleteChain(chain.id);
+                this.refreshChainsTransforms();
+                this.showNotification('Chain deleted', 'success', 'fas fa-trash');
+            },
+            deleteSavedCycle: function(cycle) {
+                if (!window.confirm('Delete cycle "' + cycle.name + '"?')) return;
+                window.TransformChains.deleteCycle(cycle.id);
+                this.refreshChainsTransforms();
+                this.showNotification('Cycle deleted', 'success', 'fas fa-trash');
+            },
+
+            // -- AI-assisted decode for chains/cycles that can't mechanically reverse --
+
+            chainDecodeKey: function(kind, id) {
+                return kind + ':' + id;
+            },
+            chainToggleDecode: function(kind, id) {
+                const key = this.chainDecodeKey(kind, id);
+                this.chainDecodeOpenKey = this.chainDecodeOpenKey === key ? '' : key;
+                this.chainDecodeInput = '';
+                this.chainDecodeOutput = '';
+                this.chainDecodeError = '';
+            },
+            chainRunAiDecode: function(entity, kind) {
+                if (!window.TransformChains) return;
+                this.chainDecodeError = '';
+                this.chainDecodeOutput = '';
+                if (!(this.chainDecodeInput || '').trim()) {
+                    this.chainDecodeError = 'Paste the transformed text first.';
+                    return;
+                }
+                const recipe = window.TransformChains.describeRecipe(entity, kind);
+                this.chainDecodeLoading = true;
+                window.TransformChains.aiDecode(recipe, this.chainDecodeInput)
+                    .then(text => { this.chainDecodeOutput = text; })
+                    .catch(e => { this.chainDecodeError = e.message || 'Decode failed.'; })
+                    .finally(() => { this.chainDecodeLoading = false; });
             },
             transformInputControlKind: function() {
                 if (!this.activeTransform || this.activeTransform.inputKind !== 'text') {

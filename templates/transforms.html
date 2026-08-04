@@ -103,6 +103,115 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Chains: ordered transform pipelines, and per-word cycles across them -->
+                        <div class="transform-section chain-manager">
+                            <button
+                                type="button"
+                                class="chain-manager-toggle"
+                                @click="chainManageOpen = !chainManageOpen"
+                                :aria-expanded="chainManageOpen ? 'true' : 'false'"
+                            >
+                                <i class="fas" :class="chainManageOpen ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                                <i class="fas fa-link"></i>
+                                Chains
+                                <small>Combine transforms into a pipeline, or rotate several across words</small>
+                            </button>
+                            <div v-if="chainManageOpen" class="chain-manager-body">
+                                <div class="chain-manager-actions">
+                                    <button type="button" class="btn btn-secondary" @click="openChainBuilder(null)">
+                                        <i class="fas fa-plus"></i> New chain
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" @click="openCycleBuilder(null)" :disabled="!savedChains().length">
+                                        <i class="fas fa-plus"></i> New per-word cycle
+                                    </button>
+                                    <small v-if="!savedChains().length" class="chain-manager-hint">Create a chain first — cycles rotate through saved chains.</small>
+                                </div>
+
+                                <div v-if="savedChains().length" class="chain-list">
+                                    <h5>Chains</h5>
+                                    <div v-for="chain in savedChains()" :key="chain.id" class="chain-list-item">
+                                        <div class="chain-list-item-main">
+                                            <strong>{{ chain.name }}</strong>
+                                            <span class="chain-badge" :class="chainIsReversibleNow(chain) ? 'chain-badge-reversible' : 'chain-badge-ai-only'">
+                                                {{ chainIsReversibleNow(chain) ? 'Reversible' : 'AI-decode only' }}
+                                            </span>
+                                            <small>{{ chainRegisteredEntry(chain) ? chainRegisteredEntry(chain).description : '' }}</small>
+                                        </div>
+                                        <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn" @click="openChainBuilder(chain)" title="Edit">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            <button
+                                                v-if="!chainIsReversibleNow(chain)"
+                                                type="button"
+                                                class="chain-action-btn"
+                                                @click="chainToggleDecode('chain', chain.id)"
+                                                title="Decode with AI"
+                                            >
+                                                <i class="fas fa-wand-magic-sparkles"></i>
+                                            </button>
+                                            <button type="button" class="chain-action-btn chain-action-btn-danger" @click="deleteSavedChain(chain)" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                        <div v-if="chainDecodeOpenKey === chainDecodeKey('chain', chain.id)" class="chain-decode-box">
+                                            <textarea v-model="chainDecodeInput" placeholder="Paste the transformed text to decode..."></textarea>
+                                            <button type="button" class="btn btn-secondary" :disabled="chainDecodeLoading" @click="chainRunAiDecode(chain, 'chain')">
+                                                {{ chainDecodeLoading ? 'Decoding…' : 'Decode with AI' }}
+                                            </button>
+                                            <p v-if="chainDecodeError" class="chain-decode-error">{{ chainDecodeError }}</p>
+                                            <textarea v-if="chainDecodeOutput" readonly :value="chainDecodeOutput" class="chain-decode-output"></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="savedCycles().length" class="chain-list">
+                                    <h5>Per-word cycles</h5>
+                                    <div v-for="cycle in savedCycles()" :key="cycle.id" class="chain-list-item">
+                                        <div class="chain-list-item-main">
+                                            <strong>{{ cycle.name }}</strong>
+                                            <span class="chain-badge" :class="cycleIsReversibleNow(cycle) ? 'chain-badge-reversible' : 'chain-badge-ai-only'">
+                                                {{ cycleIsReversibleNow(cycle) ? 'Reversible' : 'AI-decode only' }}
+                                            </span>
+                                            <small>{{ cycleRegisteredEntry(cycle) ? cycleRegisteredEntry(cycle).description : '' }}</small>
+                                        </div>
+                                        <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn" @click="openCycleBuilder(cycle)" title="Edit">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            <button
+                                                v-if="!cycleIsReversibleNow(cycle)"
+                                                type="button"
+                                                class="chain-action-btn"
+                                                @click="chainToggleDecode('cycle', cycle.id)"
+                                                title="Decode with AI"
+                                            >
+                                                <i class="fas fa-wand-magic-sparkles"></i>
+                                            </button>
+                                            <button type="button" class="chain-action-btn chain-action-btn-danger" @click="deleteSavedCycle(cycle)" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                        <div v-if="chainDecodeOpenKey === chainDecodeKey('cycle', cycle.id)" class="chain-decode-box">
+                                            <textarea v-model="chainDecodeInput" placeholder="Paste the transformed text to decode..."></textarea>
+                                            <button type="button" class="btn btn-secondary" :disabled="chainDecodeLoading" @click="chainRunAiDecode(cycle, 'cycle')">
+                                                {{ chainDecodeLoading ? 'Decoding…' : 'Decode with AI' }}
+                                            </button>
+                                            <p v-if="chainDecodeError" class="chain-decode-error">{{ chainDecodeError }}</p>
+                                            <textarea v-if="chainDecodeOutput" readonly :value="chainDecodeOutput" class="chain-decode-output"></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <p v-if="!savedChains().length && !savedCycles().length" class="chain-manager-empty">
+                                    No chains yet. A chain applies several transforms in sequence to your whole
+                                    input; a cycle rotates several chains across successive words. Both appear as
+                                    buttons on this page under <strong>chains</strong> once saved.
+                                </p>
+                            </div>
+                        </div>
+
                         <div class="transform-categories">
                             <!-- Favorites Section -->
                             <div 
@@ -686,6 +795,208 @@
                                 Cancel
                             </button>
                             <button type="button" class="transform-options-btn transform-options-btn-primary" @click="commitTransformOptions">
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                    </div>
+                </template>
+
+                <!-- Chain / cycle builder -->
+                <template v-if="chainBuilderOpen">
+                    <div class="transform-options-backdrop" @click.self="closeChainBuilder">
+                    <div
+                        class="transform-options-panel chain-builder-panel"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="chain-builder-title"
+                        @click.stop
+                    >
+                        <div class="transform-options-panel-header">
+                            <h3 id="chain-builder-title">
+                                {{ chainBuilderEditId ? 'Edit' : 'New' }}
+                                {{ chainBuilderKind === 'chain' ? 'chain' : 'per-word cycle' }}
+                            </h3>
+                            <button type="button" class="transform-options-close" @click="closeChainBuilder" title="Close" aria-label="Close">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <div class="transform-options-panel-body chain-builder-body">
+                            <!-- Chain builder: ordered list of transform nodes -->
+                            <template v-if="chainBuilderKind === 'chain'">
+                                <label class="transform-options-field">
+                                    Name
+                                    <input type="text" v-model="chainDraftName" class="transform-options-text" placeholder="e.g. ROT13 then Base64" autocomplete="off" />
+                                </label>
+
+                                <div class="chain-node-list">
+                                    <div v-for="(node, index) in chainDraftNodes" :key="index" class="chain-node-item">
+                                        <div class="chain-node-row">
+                                            <span class="chain-node-index">{{ index + 1 }}</span>
+                                            <span class="chain-node-name">{{ chainNodeName(node) }}</span>
+                                            <span class="chain-node-controls">
+                                                <button type="button" class="chain-action-btn" :disabled="index === 0" @click="chainMoveNode(index, -1)" title="Move up">
+                                                    <i class="fas fa-arrow-up"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn" :disabled="index === chainDraftNodes.length - 1" @click="chainMoveNode(index, 1)" title="Move down">
+                                                    <i class="fas fa-arrow-down"></i>
+                                                </button>
+                                                <button
+                                                    v-if="chainNodeOptionFields(node).length"
+                                                    type="button"
+                                                    class="chain-action-btn"
+                                                    @click="chainToggleNodeOptions(index)"
+                                                    title="Options"
+                                                >
+                                                    <i class="fas fa-gear"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn chain-action-btn-danger" @click="chainRemoveNode(index)" title="Remove">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </span>
+                                        </div>
+                                        <div v-if="chainOpenNodeOptionsIndex === index" class="chain-node-options">
+                                            <div v-for="opt in chainNodeOptionFields(node)" :key="opt.id" class="transform-options-field">
+                                                <label :for="'chain-opt-' + index + '-' + opt.id">{{ opt.label }}</label>
+                                                <template v-if="opt.type === 'boolean'">
+                                                    <input
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        type="checkbox"
+                                                        class="transform-options-checkbox"
+                                                        :checked="node.options[opt.id]"
+                                                        @change="chainSetNodeOption(index, opt.id, $event.target.checked)"
+                                                    />
+                                                </template>
+                                                <template v-else-if="opt.type === 'select'">
+                                                    <select
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        class="transform-options-select"
+                                                        :value="node.options[opt.id]"
+                                                        @change="chainSetNodeOption(index, opt.id, $event.target.value)"
+                                                    >
+                                                        <option v-for="choice in opt.options" :key="String(choice.value)" :value="choice.value">
+                                                            {{ choice.label }}
+                                                        </option>
+                                                    </select>
+                                                </template>
+                                                <template v-else-if="opt.type === 'text'">
+                                                    <input
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        type="text"
+                                                        class="transform-options-text"
+                                                        :value="node.options[opt.id]"
+                                                        autocomplete="off"
+                                                        @input="chainSetNodeOption(index, opt.id, $event.target.value)"
+                                                    />
+                                                </template>
+                                                <template v-else-if="opt.type === 'number'">
+                                                    <input
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        type="number"
+                                                        class="transform-options-number"
+                                                        :value="node.options[opt.id]"
+                                                        :min="opt.min != null ? opt.min : null"
+                                                        :max="opt.max != null ? opt.max : null"
+                                                        :step="opt.step != null ? opt.step : 1"
+                                                        @input="chainSetNodeOption(index, opt.id, $event.target.value === '' ? opt.default : Number($event.target.value))"
+                                                    />
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p v-if="!chainDraftNodes.length" class="chain-manager-empty">No transforms added yet.</p>
+                                </div>
+
+                                <div class="chain-node-picker">
+                                    <input
+                                        type="search"
+                                        v-model="chainNodePickerQuery"
+                                        placeholder="Search transforms to add..."
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                    />
+                                    <div class="chain-node-picker-results">
+                                        <button
+                                            v-for="candidate in chainNodeCandidates()"
+                                            :key="candidate.key"
+                                            type="button"
+                                            class="chain-node-picker-result"
+                                            @click="chainAddNode(candidate.key)"
+                                        >
+                                            <i class="fas fa-plus"></i> {{ candidate.name }}
+                                            <small>{{ candidate.category }}</small>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div v-if="chainDraftNodes.length" class="chain-preview">
+                                    <h5>Preview</h5>
+                                    <div v-for="(step, i) in chainDraftPreviewSteps()" :key="i" class="chain-preview-step">
+                                        <small>{{ step.name }}</small>
+                                        <code v-if="!step.error">{{ step.after }}</code>
+                                        <code v-else class="chain-preview-error">{{ step.error }}</code>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Cycle builder: ordered list of chain references, rotated per word -->
+                            <template v-else>
+                                <label class="transform-options-field">
+                                    Name
+                                    <input type="text" v-model="cycleDraftName" class="transform-options-text" placeholder="e.g. Alternate Base64 / Caesar" autocomplete="off" />
+                                </label>
+
+                                <div class="chain-node-list">
+                                    <div v-for="(chainId, index) in cycleDraftChainIds" :key="index" class="chain-node-item">
+                                        <div class="chain-node-row">
+                                            <span class="chain-node-index">{{ index + 1 }}</span>
+                                            <span class="chain-node-name">{{ cycleChainName(chainId) }}</span>
+                                            <span class="chain-node-controls">
+                                                <button type="button" class="chain-action-btn" :disabled="index === 0" @click="cycleMoveChainRef(index, -1)" title="Move up">
+                                                    <i class="fas fa-arrow-up"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn" :disabled="index === cycleDraftChainIds.length - 1" @click="cycleMoveChainRef(index, 1)" title="Move down">
+                                                    <i class="fas fa-arrow-down"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn chain-action-btn-danger" @click="cycleRemoveChainRef(index)" title="Remove">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <p v-if="!cycleDraftChainIds.length" class="chain-manager-empty">
+                                        Word 1 uses the first chain below, word 2 the second, and so on — wrapping
+                                        around once every chain has been used.
+                                    </p>
+                                </div>
+
+                                <label class="transform-options-field">
+                                    Add chain to rotation
+                                    <select class="transform-options-select" @change="cycleAddChainRef($event.target.value); $event.target.value = ''">
+                                        <option value="">Select a chain…</option>
+                                        <option v-for="chain in savedChains()" :key="chain.id" :value="chain.id">{{ chain.name }}</option>
+                                    </select>
+                                </label>
+
+                                <div v-if="cycleDraftChainIds.length" class="chain-preview">
+                                    <h5>Preview</h5>
+                                    <code>{{ cycleDraftPreview() }}</code>
+                                </div>
+                            </template>
+
+                            <p v-if="chainBuilderError" class="chain-decode-error">{{ chainBuilderError }}</p>
+                        </div>
+
+                        <div class="transform-options-panel-actions">
+                            <button type="button" class="transform-options-btn transform-options-btn-secondary" @click="closeChainBuilder">
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="transform-options-btn transform-options-btn-primary"
+                                @click="chainBuilderKind === 'chain' ? saveChainDraft() : saveCycleDraft()"
+                            >
                                 Save
                             </button>
                         </div>
