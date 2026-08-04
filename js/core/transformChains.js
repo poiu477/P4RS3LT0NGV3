@@ -322,7 +322,7 @@
             name: chain.name,
             category: CATEGORY,
             description: 'Chain: ' + describeChain(chain),
-            priority: 0, // never auto-guessed by the decoder; user picks it explicitly
+            priority: 0, // excluded from blind auto-guess; still reversible when selected
             canDecode: reversible,
             isChain: true,
             chainId: chain.id,
