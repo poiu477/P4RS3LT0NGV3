@@ -158,4 +158,37 @@ const syncExpected = ctx.transforms.base64.func(caesarOut);
 assert.strictEqual(TC.runStagedRecipeSync(syncRecipe, syncInput), syncExpected);
 assert.strictEqual(ctx.transforms[`chain_${syncId}`].func(syncInput), syncExpected);
 
-console.log('test_transform_recipes: OK');
+const translateCalls = [];
+ctx.AIProvider = {
+    chatCompletion: (messages, opts) => {
+        translateCalls.push({ messages, opts });
+        return Promise.resolve({
+            choices: [{ message: { content: '[LA]' + messages[messages.length - 1].content.split('\n\n').pop() } }]
+        });
+    }
+};
+
+const asyncRecipe = {
+    kind: 'staged',
+    stages: {
+        normalize: null,
+        translate: { type: 'translate', lang: 'Latin', model: 'test::translate' },
+        obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
+        present: null,
+        conceal: null,
+        carrier: null
+    }
+};
+
+TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
+    assert.strictEqual(result, '[OD]Khoor', 'translation runs before Caesar');
+    assert.strictEqual(translateCalls.length, 1);
+    assert.strictEqual(translateCalls[0].opts.model, 'test::translate');
+    assert.strictEqual(Array.isArray(translateCalls[0].messages), true);
+    assert.match(translateCalls[0].messages[translateCalls[0].messages.length - 1].content,
+        /Please translate the following English text into Latin:\n\nHello$/);
+    console.log('test_transform_recipes: OK');
+}).catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+});

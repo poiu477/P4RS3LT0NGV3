@@ -221,20 +221,62 @@
         }, text);
     }
 
-    /**
-     * Staged execution gets a dedicated runner in Task 3. Until then, expose
-     * transform-backed stages through the existing synchronous chain runner.
-     */
-    function getStagedTransformNodes(recipe) {
+    /** Return every staged node in canonical flatten order. */
+    function getStagedNodes(recipe) {
         var stagesApi = global.TransformRecipeStages;
         if (!stagesApi || typeof stagesApi.flattenStagedToNodes !== 'function') return [];
-        return stagesApi.flattenStagedToNodes(recipe).filter(function(n) {
+        return stagesApi.flattenStagedToNodes(recipe);
+    }
+
+    /** Return only transform-backed nodes for synchronous execution. */
+    function getStagedTransformNodes(recipe) {
+        return getStagedNodes(recipe).filter(function(n) {
             return n && typeof n.transform === 'string';
         });
     }
 
     function runStagedRecipeSync(recipe, text) {
         return runChainNodes(getStagedTransformNodes(recipe), text);
+    }
+
+    function buildTranslatePrompt(lang, text) {
+        var langCode = String(lang || '').toLowerCase().slice(0, 3);
+        return 'You are a professional English (en) to ' + lang + ' (' + langCode + ') translator. ' +
+            'Your goal is to accurately convey the meaning and nuances of the original English text ' +
+            'while adhering to ' + lang + ' grammar, vocabulary, and cultural sensitivities. ' +
+            'Produce only the ' + lang + ' translation, without any additional explanations or commentary. ' +
+            'Please translate the following English text into ' + lang + ':\n\n' + text;
+    }
+
+    function runTranslateNode(node, text, opts) {
+        if (!global.AIProvider || typeof global.AIProvider.chatCompletion !== 'function') {
+            return Promise.reject(new Error('Configure an AI provider in Settings.'));
+        }
+        opts = opts || {};
+        var model = node.model || opts.model ||
+            global.localStorage.getItem('translate-model') || '';
+        var callOpts = Object.assign({}, opts, { model: model });
+        return global.AIProvider.chatCompletion([
+            { role: 'user', content: buildTranslatePrompt(node.lang, text) }
+        ], callOpts).then(function(data) {
+            var message = data && data.choices && data.choices[0] && data.choices[0].message;
+            return ((message && message.content) || '').trim();
+        });
+    }
+
+    /** Walk every staged node in flatten order, awaiting AI-backed stages. */
+    function runStagedRecipeAsync(recipe, text, opts) {
+        return getStagedNodes(recipe).reduce(function(pending, node) {
+            return pending.then(function(acc) {
+                if (node && node.type === 'translate') {
+                    return runTranslateNode(node, acc, opts);
+                }
+                if (node && typeof node.transform === 'string') {
+                    return runChainNodes([node], acc);
+                }
+                return acc;
+            });
+        }, Promise.resolve(text));
     }
 
     function getRunnableChainNodes(chain) {
@@ -693,6 +735,7 @@
         smartWordSplit: smartWordSplit,
         runChainNodes: runChainNodes,
         runStagedRecipeSync: runStagedRecipeSync,
+        runStagedRecipeAsync: runStagedRecipeAsync,
         reverseChainNodes: reverseChainNodes,
         runCycle: runCycle,
         resolveCycleChains: resolveCycleChains,
