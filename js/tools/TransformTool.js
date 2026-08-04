@@ -65,6 +65,12 @@ class TransformTool extends Tool {
             window.syncCustomSpellingAlphabets();
         }
 
+        // Chains reference other transforms, so they must register after the
+        // built-ins (and after custom alphabets, which chains may include).
+        if (typeof window !== 'undefined' && window.TransformChains) {
+            window.TransformChains.syncTransforms();
+        }
+
         if (!window.transforms || Object.keys(window.transforms).length === 0) {
             return [];
         }
