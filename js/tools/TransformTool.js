@@ -1013,6 +1013,10 @@ class TransformTool extends Tool {
                     return t.category === 'custom_spelling';
                 }).length;
 
+                const previousKey = this.activeTransform && this.activeTransform.transformKey
+                    ? this.activeTransform.transformKey
+                    : null;
+
                 this.transforms = transformTool.buildTransformsFromWindow();
                 const categories = transformTool.rebuildTransformCategories(this.transforms);
                 this.legendCategories = categories.legendCategories;
@@ -1023,6 +1027,21 @@ class TransformTool extends Tool {
                 }).length;
                 if (nextCustomCount !== previousCustomCount) {
                     this.saveCategoryOrder(this.categories);
+                }
+
+                if (!previousKey) {
+                    this.activeTransform = null;
+                } else {
+                    const match = this.transforms.find(function(t) {
+                        return t.transformKey === previousKey;
+                    });
+                    this.activeTransform = match || null;
+                    if (match && this.transformInput && this.activeTab === 'transforms') {
+                        const opts = this.getMergedOptionsForTransform(match.name);
+                        this.transformOutput = match.func(this.transformInput, opts);
+                    } else if (!match) {
+                        this.transformOutput = '';
+                    }
                 }
             },
         };
