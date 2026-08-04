@@ -46,8 +46,17 @@
         if (!isRecord(chain)) return null;
         if (typeof chain.id !== 'string' || !chain.id) return null;
         if (typeof chain.name !== 'string') return null;
+        if (chain.kind === 'staged') {
+            if (!isRecord(chain.stages)) return null;
+            return Object.assign({}, chain, {
+                kind: 'staged',
+                stages: chain.stages
+            });
+        }
+        // @legacy free-form chain
         if (!Array.isArray(chain.nodes)) return null;
         return Object.assign({}, chain, {
+            kind: chain.kind || 'freeform',
             nodes: chain.nodes.filter(isValidPersistedNode)
         });
     }
@@ -96,6 +105,10 @@
 
     function loadChains() {
         return readList(CHAIN_STORAGE_KEY).map(sanitizeChainRecord).filter(Boolean);
+    }
+
+    function loadRecipes() {
+        return loadChains().filter(function(chain) { return chain.kind === 'staged'; });
     }
 
     function loadCycles() {
@@ -208,6 +221,18 @@
         }, text);
     }
 
+    /**
+     * Staged execution gets a dedicated runner in Task 3. Until then, expose
+     * transform-backed stages through the existing synchronous chain runner.
+     */
+    function getRunnableChainNodes(chain) {
+        if (!chain) return [];
+        if (chain.kind !== 'staged') return chain.nodes || [];
+        var stagesApi = global.TransformRecipeStages;
+        if (!stagesApi || typeof stagesApi.flattenStagedToNodes !== 'function') return [];
+        return stagesApi.flattenStagedToNodes(chain).filter(isValidPersistedNode);
+    }
+
     /** Undo a chain: same nodes, back-to-front, each reversed. */
     function reverseChainNodes(nodes, text) {
         var list = (nodes || []).filter(nodeIsValid).slice().reverse();
@@ -223,7 +248,7 @@
 
     /** A chain round-trips only if every one of its nodes does. */
     function chainIsReversible(chain) {
-        var nodes = (chain && chain.nodes) || [];
+        var nodes = getRunnableChainNodes(chain);
         if (!nodes.length) return false;
         return nodes.every(function(node) {
             return nodeIsValid(node) && nodeCanReverse(node);
@@ -266,8 +291,8 @@
             wordIndex++;
             try {
                 return reverseMode
-                    ? reverseChainNodes(chain.nodes, seg.text)
-                    : runChainNodes(chain.nodes, seg.text);
+                    ? reverseChainNodes(getRunnableChainNodes(chain), seg.text)
+                    : runChainNodes(getRunnableChainNodes(chain), seg.text);
             } catch (e) {
                 console.warn('Cycle chain "' + chain.name + '" failed:', e);
                 return seg.text;
@@ -312,11 +337,12 @@
     }
 
     function describeChain(chain) {
-        var names = (chain.nodes || []).map(describeNode);
+        var names = getRunnableChainNodes(chain).map(describeNode);
         return names.join(' → ') || 'empty chain';
     }
 
     function registerChain(chain) {
+        var nodes = getRunnableChainNodes(chain);
         var reversible = chainIsReversible(chain);
         global.transforms[CHAIN_PREFIX + chain.id] = {
             name: chain.name,
@@ -326,10 +352,10 @@
             canDecode: reversible,
             isChain: true,
             chainId: chain.id,
-            func: function(text) { return runChainNodes(chain.nodes, text); },
-            preview: function(text) { return runChainNodes(chain.nodes, text); },
+            func: function(text) { return runChainNodes(nodes, text); },
+            preview: function(text) { return runChainNodes(nodes, text); },
             reverse: reversible
-                ? function(text) { return reverseChainNodes(chain.nodes, text); }
+                ? function(text) { return reverseChainNodes(nodes, text); }
                 : null
         };
     }
@@ -391,6 +417,7 @@
     }
 
     function saveChain(chain) {
+        // @legacy free-form persistence path
         var rejection = validateChainForSave(chain);
         if (rejection) {
             console.warn('saveChain rejected:', rejection);
@@ -405,11 +432,20 @@
             list = list.map(function(c) {
                 if (c.id !== chain.id) return c;
                 found = true;
-                return Object.assign({}, c, chain, { updatedAt: now });
+                return Object.assign({}, c, chain, { kind: 'freeform', updatedAt: now });
             });
-            if (!found) list.push(Object.assign({}, chain, { createdAt: now, updatedAt: now }));
+            if (!found) list.push(Object.assign({}, chain, {
+                kind: 'freeform',
+                createdAt: now,
+                updatedAt: now
+            }));
         } else {
-            chain = Object.assign({}, chain, { id: genId(), createdAt: now, updatedAt: now });
+            chain = Object.assign({}, chain, {
+                id: genId(),
+                kind: 'freeform',
+                createdAt: now,
+                updatedAt: now
+            });
             list.push(chain);
         }
         if (!writeList(CHAIN_STORAGE_KEY, list)) {
@@ -419,6 +455,41 @@
         syncTransforms();
         lastMutationError = '';
         return chain.id;
+    }
+
+    function saveRecipe(input) {
+        lastMutationError = '';
+        var stagesApi = global.TransformRecipeStages;
+        if (!stagesApi) {
+            lastMutationError = 'Staged recipes unavailable.';
+            return null;
+        }
+        var rejection = stagesApi.validateStagedRecipe(input, global.transforms || {});
+        if (rejection) {
+            lastMutationError = rejection;
+            return null;
+        }
+
+        var list = loadChains();
+        var id = (input && input.id) || genId();
+        var now = Date.now();
+        var record = {
+            id: id,
+            name: String(input.name).trim(),
+            kind: 'staged',
+            stages: input.stages,
+            createdAt: (input && input.createdAt) || now,
+            updatedAt: now
+        };
+        var idx = list.findIndex(function(chain) { return chain.id === id; });
+        if (idx >= 0) list[idx] = Object.assign({}, list[idx], record);
+        else list.push(record);
+        if (!writeList(CHAIN_STORAGE_KEY, list)) {
+            lastMutationError = 'Could not write chains to browser storage.';
+            return null;
+        }
+        syncTransforms();
+        return id;
     }
 
     function deleteChain(id) {
@@ -587,8 +658,10 @@
         CHAIN_PREFIX: CHAIN_PREFIX,
         CYCLE_PREFIX: CYCLE_PREFIX,
         loadChains: loadChains,
+        loadRecipes: loadRecipes,
         loadCycles: loadCycles,
         saveChain: saveChain,
+        saveRecipe: saveRecipe,
         deleteChain: deleteChain,
         saveCycle: saveCycle,
         deleteCycle: deleteCycle,
