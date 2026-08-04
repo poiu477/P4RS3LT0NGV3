@@ -426,7 +426,8 @@ class TransformTool extends Tool {
                     nodes: this.chainDraftNodes
                 });
                 if (!id) {
-                    this.chainBuilderError = 'Could not save — a chain cannot reference itself or another saved chain/cycle.';
+                    this.chainBuilderError = window.TransformChains.getLastMutationError() ||
+                        'Could not save chain.';
                     return;
                 }
                 this.chainBuilderOpen = false;
@@ -489,7 +490,8 @@ class TransformTool extends Tool {
                     chainIds: this.cycleDraftChainIds
                 });
                 if (!id) {
-                    this.chainBuilderError = 'Could not save cycle.';
+                    this.chainBuilderError = window.TransformChains.getLastMutationError() ||
+                        'Could not save cycle.';
                     return;
                 }
                 this.chainBuilderOpen = false;
@@ -503,13 +505,29 @@ class TransformTool extends Tool {
             },
             deleteSavedChain: function(chain) {
                 if (!window.confirm('Delete chain "' + chain.name + '"? Any cycle using it will drop the reference.')) return;
-                window.TransformChains.deleteChain(chain.id);
+                const ok = window.TransformChains.deleteChain(chain.id);
+                if (!ok) {
+                    this.showNotification(
+                        window.TransformChains.getLastMutationError() || 'Could not delete chain.',
+                        'error',
+                        'fas fa-exclamation-triangle'
+                    );
+                    return;
+                }
                 this.refreshChainsTransforms();
                 this.showNotification('Chain deleted', 'success', 'fas fa-trash');
             },
             deleteSavedCycle: function(cycle) {
                 if (!window.confirm('Delete cycle "' + cycle.name + '"?')) return;
-                window.TransformChains.deleteCycle(cycle.id);
+                const ok = window.TransformChains.deleteCycle(cycle.id);
+                if (!ok) {
+                    this.showNotification(
+                        window.TransformChains.getLastMutationError() || 'Could not delete cycle.',
+                        'error',
+                        'fas fa-exclamation-triangle'
+                    );
+                    return;
+                }
                 this.refreshChainsTransforms();
                 this.showNotification('Cycle deleted', 'success', 'fas fa-trash');
             },

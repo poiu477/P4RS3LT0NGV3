@@ -29,6 +29,7 @@
     var CHAIN_PREFIX = 'chain_';
     var CYCLE_PREFIX = 'cycle_';
     var CATEGORY = 'chains';
+    var lastMutationError = '';
 
     // ---- storage ----------------------------------------------------------
 
@@ -361,10 +362,15 @@
 
     // ---- CRUD -------------------------------------------------------------
 
+    function getLastMutationError() {
+        return lastMutationError || '';
+    }
+
     function saveChain(chain) {
         var rejection = validateChainForSave(chain);
         if (rejection) {
             console.warn('saveChain rejected:', rejection);
+            lastMutationError = rejection;
             return null;
         }
 
@@ -382,8 +388,12 @@
             chain = Object.assign({}, chain, { id: genId(), createdAt: now, updatedAt: now });
             list.push(chain);
         }
-        if (!writeList(CHAIN_STORAGE_KEY, list)) return null;
+        if (!writeList(CHAIN_STORAGE_KEY, list)) {
+            lastMutationError = 'Could not write chains to browser storage.';
+            return null;
+        }
         syncTransforms();
+        lastMutationError = '';
         return chain.id;
     }
 
@@ -397,13 +407,18 @@
             });
         });
 
-        if (!writeList(CHAIN_STORAGE_KEY, nextChains)) return false;
+        if (!writeList(CHAIN_STORAGE_KEY, nextChains)) {
+            lastMutationError = 'Could not write chains to browser storage.';
+            return false;
+        }
         if (!writeList(CYCLE_STORAGE_KEY, nextCycles)) {
             // Keep chain + cycle lists consistent if the second write fails.
             writeList(CHAIN_STORAGE_KEY, prevChains);
+            lastMutationError = 'Could not write cycles to browser storage.';
             return false;
         }
         syncTransforms();
+        lastMutationError = '';
         return true;
     }
 
@@ -422,15 +437,23 @@
             cycle = Object.assign({}, cycle, { id: genId(), createdAt: now, updatedAt: now });
             list.push(cycle);
         }
-        if (!writeList(CYCLE_STORAGE_KEY, list)) return null;
+        if (!writeList(CYCLE_STORAGE_KEY, list)) {
+            lastMutationError = 'Could not write cycles to browser storage.';
+            return null;
+        }
         syncTransforms();
+        lastMutationError = '';
         return cycle.id;
     }
 
     function deleteCycle(id) {
         var next = loadCycles().filter(function(c) { return c.id !== id; });
-        if (!writeList(CYCLE_STORAGE_KEY, next)) return false;
+        if (!writeList(CYCLE_STORAGE_KEY, next)) {
+            lastMutationError = 'Could not write cycles to browser storage.';
+            return false;
+        }
         syncTransforms();
+        lastMutationError = '';
         return true;
     }
 
@@ -538,6 +561,7 @@
         deleteChain: deleteChain,
         saveCycle: saveCycle,
         deleteCycle: deleteCycle,
+        getLastMutationError: getLastMutationError,
         syncTransforms: syncTransforms,
         chainIsReversible: chainIsReversible,
         cycleRoundTripsCleanly: cycleRoundTripsCleanly,
