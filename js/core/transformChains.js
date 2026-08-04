@@ -239,13 +239,12 @@
         return runChainNodes(getStagedTransformNodes(recipe), text);
     }
 
-    function buildTranslatePrompt(lang, text) {
-        var langCode = String(lang || '').toLowerCase().slice(0, 3);
-        return 'You are a professional English (en) to ' + lang + ' (' + langCode + ') translator. ' +
+    function buildTranslatePrompt(langName, langCode, text) {
+        return 'You are a professional English (en) to ' + langName + ' (' + langCode + ') translator. ' +
             'Your goal is to accurately convey the meaning and nuances of the original English text ' +
-            'while adhering to ' + lang + ' grammar, vocabulary, and cultural sensitivities. ' +
-            'Produce only the ' + lang + ' translation, without any additional explanations or commentary. ' +
-            'Please translate the following English text into ' + lang + ':\n\n' + text;
+            'while adhering to ' + langName + ' grammar, vocabulary, and cultural sensitivities. ' +
+            'Produce only the ' + langName + ' translation, without any additional explanations or commentary. ' +
+            'Please translate the following English text into ' + langName + ':\n\n' + text;
     }
 
     function runTranslateNode(node, text, opts) {
@@ -256,8 +255,12 @@
         var model = node.model || opts.model ||
             global.localStorage.getItem('translate-model') || '';
         var callOpts = Object.assign({}, opts, { model: model });
+        var stagesApi = global.TransformRecipeStages;
+        var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+            ? stagesApi.resolveTranslateLanguage(node.lang)
+            : { name: String(node.lang || ''), code: String(node.lang || '') };
         return global.AIProvider.chatCompletion([
-            { role: 'user', content: buildTranslatePrompt(node.lang, text) }
+            { role: 'user', content: buildTranslatePrompt(language.name, language.code, text) }
         ], callOpts).then(function(data) {
             var message = data && data.choices && data.choices[0] && data.choices[0].message;
             return ((message && message.content) || '').trim();

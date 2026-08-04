@@ -27,6 +27,35 @@
         conceal: {}
     };
 
+    // Staged recipes persist TranslateTool language codes; known display names remain accepted.
+    var TRANSLATE_LANG_CODE_MAP = {
+        'Spanish': 'es', 'French': 'fr', 'German': 'de', 'Chinese': 'zh',
+        'Japanese': 'ja', 'Korean': 'ko', 'Arabic': 'ar', 'Russian': 'ru',
+        'Hindi': 'hi', 'Portuguese': 'pt', 'Italian': 'it', 'Dutch': 'nl',
+        'Turkish': 'tr', 'Vietnamese': 'vi', 'Thai': 'th', 'Polish': 'pl',
+        'Latin': 'la', 'Sanskrit': 'sa', 'Ancient Greek': 'grc',
+        'Egyptian Arabic': 'arz', 'Old English': 'ang', 'Sumerian': 'sux',
+        'Akkadian': 'akk', 'Hawaiian': 'haw', 'Welsh': 'cy', 'Swahili': 'sw',
+        'Hebrew': 'he', 'Persian': 'fa', 'Tamil': 'ta', 'Esperanto': 'eo',
+        'Irish': 'ga', 'Basque': 'eu', 'Navajo': 'nv', 'Quechua': 'qu',
+        'Nahuatl': 'nah', 'Tagalog': 'tl', 'Maori': 'mi', 'Yoruba': 'yo',
+        'Zulu': 'zu', 'Catalan': 'ca', 'Romanian': 'ro', 'Czech': 'cs',
+        'Indonesian': 'id', 'Malay': 'ms', 'Bengali': 'bn', 'Urdu': 'ur'
+    };
+
+    function resolveTranslateLanguage(lang) {
+        var raw = String(lang || '').trim();
+        var names = Object.keys(TRANSLATE_LANG_CODE_MAP);
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i];
+            var code = TRANSLATE_LANG_CODE_MAP[name];
+            if (raw === name || raw.toLowerCase() === code.toLowerCase()) {
+                return { name: name, code: code };
+            }
+        }
+        return { name: raw, code: raw };
+    }
+
     function isRecord(v) {
         return !!v && typeof v === 'object' && !Array.isArray(v);
     }
@@ -151,6 +180,8 @@
     global.TransformRecipeStages = {
         STAGE_ORDER: STAGE_ORDER,
         STAGE_TRANSFORM_CATEGORIES: STAGE_TRANSFORM_CATEGORIES,
+        TRANSLATE_LANG_CODE_MAP: TRANSLATE_LANG_CODE_MAP,
+        resolveTranslateLanguage: resolveTranslateLanguage,
         isTransformAllowedInStage: isTransformAllowedInStage,
         validateStagedRecipe: validateStagedRecipe,
         flattenStagedToNodes: flattenStagedToNodes,

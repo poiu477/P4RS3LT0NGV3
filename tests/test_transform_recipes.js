@@ -172,7 +172,7 @@ const asyncRecipe = {
     kind: 'staged',
     stages: {
         normalize: null,
-        translate: { type: 'translate', lang: 'Latin', model: 'test::translate' },
+        translate: { type: 'translate', lang: 'la', model: 'test::translate' },
         obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
         present: null,
         conceal: null,
@@ -185,6 +185,8 @@ TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
     assert.strictEqual(translateCalls.length, 1);
     assert.strictEqual(translateCalls[0].opts.model, 'test::translate');
     assert.strictEqual(Array.isArray(translateCalls[0].messages), true);
+    assert.match(translateCalls[0].messages[translateCalls[0].messages.length - 1].content,
+        /English \(en\) to Latin \(la\) translator/);
     assert.match(translateCalls[0].messages[translateCalls[0].messages.length - 1].content,
         /Please translate the following English text into Latin:\n\nHello$/);
     console.log('test_transform_recipes: OK');
