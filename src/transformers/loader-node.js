@@ -33,22 +33,36 @@ function loadBaseTransformer() {
     return BaseTransformerClass;
 }
 
-// Load emojiData from emojiData.js
+// Load emojiData from generated emojiData.js (build output, with legacy fallback)
 function loadEmojiData() {
+    const repoRoot = path.join(__dirname, '..', '..');
+    const candidates = [
+        path.join(repoRoot, 'dist', 'js', 'data', 'emojiData.js'),
+        path.join(repoRoot, 'js', 'data', 'emojiData.js')
+    ];
+
+    const emojiDataPath = candidates.find(candidate => fs.existsSync(candidate));
+    if (!emojiDataPath) {
+        console.warn(
+            '⚠️  Could not load emojiData: no file found at',
+            candidates.join(' or ')
+        );
+        return {};
+    }
+
     try {
-        const emojiDataPath = path.join(__dirname, '..', '..', 'js', 'emojiData.js');
         const code = fs.readFileSync(emojiDataPath, 'utf8');
-        
+
         // Create a temporary window object to capture emojiData
         const tempWindow = { emojiData: {} };
         const sandbox = {
             window: tempWindow,
             console: console
         };
-        
+
         vm.createContext(sandbox);
         vm.runInContext(code, sandbox);
-        
+
         return tempWindow.emojiData;
     } catch (error) {
         console.warn('⚠️  Could not load emojiData:', error.message);
