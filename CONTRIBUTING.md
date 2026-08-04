@@ -23,6 +23,7 @@ P4RS3LT0NGV3/
 │   │   ├── decoder.js         # Universal decode engine
 │   │   ├── steganography.js   # Emoji / invisible carriers
 │   │   ├── toolRegistry.js    # Registers tools, merges Vue data/methods
+│   │   ├── transformChains.js # Saved transform chains & per-word cycles
 │   │   └── transformOptions.js
 │   ├── data/                    # Static data shipped with the app (see note below)
 │   │   ├── anticlassifierPrompt.js
@@ -121,6 +122,7 @@ dist/   # npm run build — gitignored
 
 - **`js/core/`** — Shared business logic and infrastructure (not tab-specific)
   - Examples: `decoder.js` (DecodeTool, decoder pipeline), `steganography.js` (EmojiTool, steg engine), `toolRegistry.js` (registers tools, merges Vue surface), `transformOptions.js` (shared transform UI helpers)
+  - Transform chains and cycles are core logic in `transformChains.js`, registered into `window.transforms`; their UI lives on `TransformTool`.
 - **`js/utils/`** — Cross-cutting helpers (`clipboard`, `EmojiUtils` in `emoji.js`, notifications, `theme.js`, `openrouterModels.js`, etc.)
 - **`js/data/`** — Committed static payloads (models, prompts, glitch token data, end sequences, `emojiCompatibility.js`). **`emojiData.js`** is **not** edited here — it is **generated** to `dist/js/data/emojiData.js` by `npm run build:emoji`.
 - **`src/`** — `emojiWordMap.js` feeds the emoji build; `transformers/` holds transformer modules

@@ -79,6 +79,15 @@ Example: Transform Tool, Decoder Tool, Emoji Tool
 ### Tools with Dynamic Content
 - ✅ Splitter Tool - Self-contained in SplitterTool.js
 
+## Transform chains & cycles
+
+- Module: `js/core/transformChains.js` (`window.TransformChains`)
+- Storage: `localStorage` keys `transform-chains-v1`, `transform-cycles-v1`
+- Registration: `chain_<id>` / `cycle_<id>` on `window.transforms`, category `chains`
+- No nesting of saved chains/cycles inside chain nodes
+- Mechanical reverse when every node (and cycle probe) allows it; otherwise AI recipe decode via `aiDecode`
+- UI: Transform tab Chains manager (`templates/transforms.html`, methods on `TransformTool`)
+
 ## Adding a New Tool
 
 ### Step 1: Create Tool Class

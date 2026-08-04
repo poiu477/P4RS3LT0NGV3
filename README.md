@@ -268,6 +268,15 @@ Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider**
 - **Per-transform options**: Gear icon where a transform exposes settings.
 - **Keyboard shortcut**: **T** (shown in the tab title).
 
+### Chains & Cycles (on the Transform tab)
+
+- **Chain** — an ordered pipeline of transforms applied to the whole input; each node snapshots its own options (e.g. Caesar shift 3 then shift 7).
+- **Cycle** — rotate a list of chains across words (word 1 → chain A, word 2 → chain B, wrap).
+- Saved entities appear under the **chains** category like ordinary transforms (search, favorites, click-to-apply).
+- Nested chains/cycles are not allowed.
+- If a recipe cannot mechanically reverse, use **AI decode** in the Chains manager (uses your configured AI providers).
+- Export/import JSON from the Chains manager; copy the human-readable recipe for sharing.
+
 ### 🌐 **AI Translation** (AI-powered)
 
 *Lives on the **Transform** tab — not a separate tab.*
