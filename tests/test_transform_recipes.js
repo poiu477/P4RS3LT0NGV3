@@ -127,4 +127,35 @@ assert.strictEqual(TC.saveRecipe({
     }
 }), null);
 
+ctx.transforms.caesar.func = (t, o) => {
+    const shift = (o && o.shift) || 3;
+    return t.replace(/[a-zA-Z]/g, (ch) => {
+        const base = ch <= 'Z' ? 65 : 97;
+        return String.fromCharCode(((ch.charCodeAt(0) - base + shift) % 26) + base);
+    });
+};
+ctx.transforms.base64.func = (t) => Buffer.from(t, 'utf8').toString('base64');
+
+const syncId = TC.saveRecipe({
+    name: 'Caesar Base64',
+    kind: 'staged',
+    stages: {
+        normalize: null,
+        translate: null,
+        obfuscate: [
+            { transform: 'caesar', options: { shift: 3 } },
+            { transform: 'base64', options: {} }
+        ],
+        present: null,
+        conceal: null,
+        carrier: null
+    }
+});
+const syncRecipe = TC.loadChains().filter(c => c.id === syncId)[0];
+const syncInput = 'Hello';
+const caesarOut = ctx.transforms.caesar.func(syncInput, { shift: 3 });
+const syncExpected = ctx.transforms.base64.func(caesarOut);
+assert.strictEqual(TC.runStagedRecipeSync(syncRecipe, syncInput), syncExpected);
+assert.strictEqual(ctx.transforms[`chain_${syncId}`].func(syncInput), syncExpected);
+
 console.log('test_transform_recipes: OK');

@@ -225,12 +225,22 @@
      * Staged execution gets a dedicated runner in Task 3. Until then, expose
      * transform-backed stages through the existing synchronous chain runner.
      */
+    function getStagedTransformNodes(recipe) {
+        var stagesApi = global.TransformRecipeStages;
+        if (!stagesApi || typeof stagesApi.flattenStagedToNodes !== 'function') return [];
+        return stagesApi.flattenStagedToNodes(recipe).filter(function(n) {
+            return n && typeof n.transform === 'string';
+        });
+    }
+
+    function runStagedRecipeSync(recipe, text) {
+        return runChainNodes(getStagedTransformNodes(recipe), text);
+    }
+
     function getRunnableChainNodes(chain) {
         if (!chain) return [];
         if (chain.kind !== 'staged') return chain.nodes || [];
-        var stagesApi = global.TransformRecipeStages;
-        if (!stagesApi || typeof stagesApi.flattenStagedToNodes !== 'function') return [];
-        return stagesApi.flattenStagedToNodes(chain).filter(isValidPersistedNode);
+        return getStagedTransformNodes(chain);
     }
 
     /** Undo a chain: same nodes, back-to-front, each reversed. */
@@ -344,6 +354,7 @@
     function registerChain(chain) {
         var nodes = getRunnableChainNodes(chain);
         var reversible = chainIsReversible(chain);
+        var isStaged = chain.kind === 'staged';
         global.transforms[CHAIN_PREFIX + chain.id] = {
             name: chain.name,
             category: CATEGORY,
@@ -352,8 +363,12 @@
             canDecode: reversible,
             isChain: true,
             chainId: chain.id,
-            func: function(text) { return runChainNodes(nodes, text); },
-            preview: function(text) { return runChainNodes(nodes, text); },
+            func: function(text) {
+                return isStaged ? runStagedRecipeSync(chain, text) : runChainNodes(nodes, text);
+            },
+            preview: function(text) {
+                return isStaged ? runStagedRecipeSync(chain, text) : runChainNodes(nodes, text);
+            },
             reverse: reversible
                 ? function(text) { return reverseChainNodes(nodes, text); }
                 : null
@@ -677,6 +692,7 @@
         previewSteps: previewSteps,
         smartWordSplit: smartWordSplit,
         runChainNodes: runChainNodes,
+        runStagedRecipeSync: runStagedRecipeSync,
         reverseChainNodes: reverseChainNodes,
         runCycle: runCycle,
         resolveCycleChains: resolveCycleChains,
