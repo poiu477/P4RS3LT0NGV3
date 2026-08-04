@@ -164,7 +164,7 @@
         if (!Array.isArray(cycle.chainIds) || !cycle.chainIds.length) {
             return 'Add at least one chain to the cycle.';
         }
-        var known = {};
+        var known = Object.create(null);
         loadChains().forEach(function(c) { known[c.id] = true; });
         for (var i = 0; i < cycle.chainIds.length; i++) {
             var cid = cycle.chainIds[i];
