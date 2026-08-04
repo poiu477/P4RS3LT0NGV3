@@ -163,7 +163,7 @@ class TranslateTool extends Tool {
                     if (isTranslateGemma && providerId === 'openrouter' &&
                         (e.status === 404 || e.status === 400 || (e.message && e.message.indexOf('not found') !== -1))) {
                         this.translateError = 'TranslateGemma not yet on OpenRouter — switching to Gemma 3 27B...';
-                        this.translateModel = 'google/gemma-3-27b-it';
+                        this.translateModel = window.AIProvider.qualify('openrouter', 'google/gemma-3-27b-it');
                         localStorage.setItem('translate-model', this.translateModel);
                         this.translateLoading = false;
                         this.translateActiveLang = '';

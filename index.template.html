@@ -358,6 +358,7 @@
                                             :type="aiRevealedKeys[p.id] ? 'text' : 'password'"
                                             v-model="aiKeyDrafts[p.id]"
                                             :placeholder="p.keyPlaceholder || 'API key'"
+                                            :aria-label="(p.name || 'Provider') + ' API key'"
                                             class="api-key-input"
                                             autocomplete="off"
                                             spellcheck="false"

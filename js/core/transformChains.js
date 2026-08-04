@@ -32,12 +32,45 @@
 
     // ---- storage ----------------------------------------------------------
 
+    function isRecord(value) {
+        return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /** Structural check for a persisted node (transform key required). */
+    function isValidPersistedNode(node) {
+        return isRecord(node) && typeof node.transform === 'string' && node.transform.length > 0;
+    }
+
+    function sanitizeChainRecord(chain) {
+        if (!isRecord(chain)) return null;
+        if (typeof chain.id !== 'string' || !chain.id) return null;
+        if (typeof chain.name !== 'string') return null;
+        if (!Array.isArray(chain.nodes)) return null;
+        return Object.assign({}, chain, {
+            nodes: chain.nodes.filter(isValidPersistedNode)
+        });
+    }
+
+    function sanitizeCycleRecord(cycle) {
+        if (!isRecord(cycle)) return null;
+        if (typeof cycle.id !== 'string' || !cycle.id) return null;
+        if (typeof cycle.name !== 'string') return null;
+        if (!Array.isArray(cycle.chainIds)) return null;
+        return Object.assign({}, cycle, {
+            chainIds: cycle.chainIds.filter(function(id) {
+                return typeof id === 'string' && id.length > 0;
+            })
+        });
+    }
+
     function readList(key) {
         try {
             var raw = global.localStorage.getItem(key);
             if (!raw) return [];
             var parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
+            if (!Array.isArray(parsed)) return [];
+            // Drop holes / explicit nulls before record sanitization.
+            return parsed.filter(function(item) { return item != null; });
         } catch (e) {
             return [];
         }
@@ -60,8 +93,13 @@
         return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     }
 
-    function loadChains() { return readList(CHAIN_STORAGE_KEY); }
-    function loadCycles() { return readList(CYCLE_STORAGE_KEY); }
+    function loadChains() {
+        return readList(CHAIN_STORAGE_KEY).map(sanitizeChainRecord).filter(Boolean);
+    }
+
+    function loadCycles() {
+        return readList(CYCLE_STORAGE_KEY).map(sanitizeCycleRecord).filter(Boolean);
+    }
 
     // ---- node execution ---------------------------------------------------
 
@@ -69,9 +107,50 @@
         return (global.transforms && global.transforms[key]) || null;
     }
 
-    /** A node is runnable only if its transform is still registered. */
+    /** True when a transform key points at a saved chain or cycle registration. */
+    function isSavedTransformKey(key) {
+        return typeof key === 'string' &&
+            (key.indexOf(CHAIN_PREFIX) === 0 || key.indexOf(CYCLE_PREFIX) === 0);
+    }
+
+    /**
+     * A node is runnable only if its transform is still registered and is not a
+     * nested saved chain/cycle (those are unsupported — nesting would let
+     * runChainNodes recurse without a bound).
+     */
     function nodeIsValid(node) {
-        return !!(node && node.transform && lookupTransform(node.transform));
+        if (!node || !node.transform) return false;
+        if (isSavedTransformKey(node.transform)) return false;
+        var t = lookupTransform(node.transform);
+        if (!t || t.isChain || t.isCycle) return false;
+        return true;
+    }
+
+    /**
+     * Reject self-references and any nested saved chain/cycle before persist.
+     * Returns an error string, or null when the graph is safe to save.
+     */
+    function validateChainForSave(chain) {
+        var nodes = (chain && chain.nodes) || [];
+        var selfKey = chain && chain.id ? (CHAIN_PREFIX + chain.id) : null;
+
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            if (!node || typeof node.transform !== 'string' || !node.transform) {
+                return 'Each chain node needs a transform key.';
+            }
+            if (selfKey && node.transform === selfKey) {
+                return 'A chain cannot reference itself.';
+            }
+            if (isSavedTransformKey(node.transform)) {
+                return 'Chains cannot nest other saved chains or cycles.';
+            }
+            var t = lookupTransform(node.transform);
+            if (t && (t.isChain || t.isCycle)) {
+                return 'Chains cannot nest other saved chains or cycles.';
+            }
+        }
+        return null;
     }
 
     function nodeCanReverse(node) {
@@ -190,11 +269,25 @@
         });
     }
 
+    function serializeNodeOptions(options) {
+        var opts = (options && typeof options === 'object' && !Array.isArray(options)) ? options : {};
+        try {
+            return JSON.stringify(opts);
+        } catch (e) {
+            return '{}';
+        }
+    }
+
+    /** One node as "Name [key] {options}" so recipes can tell Caesar shift 3 from 7. */
+    function describeNode(node) {
+        var key = (node && typeof node.transform === 'string' && node.transform) || '?';
+        var t = lookupTransform(key);
+        var label = t ? (t.name + ' [' + key + ']') : key;
+        return label + ' ' + serializeNodeOptions(node && node.options);
+    }
+
     function describeChain(chain) {
-        var names = (chain.nodes || []).map(function(n) {
-            var t = lookupTransform(n.transform);
-            return t ? t.name : n.transform;
-        });
+        var names = (chain.nodes || []).map(describeNode);
         return names.join(' → ') || 'empty chain';
     }
 
@@ -269,6 +362,12 @@
     // ---- CRUD -------------------------------------------------------------
 
     function saveChain(chain) {
+        var rejection = validateChainForSave(chain);
+        if (rejection) {
+            console.warn('saveChain rejected:', rejection);
+            return null;
+        }
+
         var list = loadChains();
         var now = Date.now();
         if (chain.id) {
@@ -283,20 +382,29 @@
             chain = Object.assign({}, chain, { id: genId(), createdAt: now, updatedAt: now });
             list.push(chain);
         }
-        writeList(CHAIN_STORAGE_KEY, list);
+        if (!writeList(CHAIN_STORAGE_KEY, list)) return null;
         syncTransforms();
         return chain.id;
     }
 
     function deleteChain(id) {
-        writeList(CHAIN_STORAGE_KEY, loadChains().filter(function(c) { return c.id !== id; }));
-        // Drop the dangling reference from any cycle that used it.
-        writeList(CYCLE_STORAGE_KEY, loadCycles().map(function(cy) {
+        var prevChains = loadChains();
+        var prevCycles = loadCycles();
+        var nextChains = prevChains.filter(function(c) { return c.id !== id; });
+        var nextCycles = prevCycles.map(function(cy) {
             return Object.assign({}, cy, {
                 chainIds: (cy.chainIds || []).filter(function(cid) { return cid !== id; })
             });
-        }));
+        });
+
+        if (!writeList(CHAIN_STORAGE_KEY, nextChains)) return false;
+        if (!writeList(CYCLE_STORAGE_KEY, nextCycles)) {
+            // Keep chain + cycle lists consistent if the second write fails.
+            writeList(CHAIN_STORAGE_KEY, prevChains);
+            return false;
+        }
         syncTransforms();
+        return true;
     }
 
     function saveCycle(cycle) {
@@ -314,14 +422,16 @@
             cycle = Object.assign({}, cycle, { id: genId(), createdAt: now, updatedAt: now });
             list.push(cycle);
         }
-        writeList(CYCLE_STORAGE_KEY, list);
+        if (!writeList(CYCLE_STORAGE_KEY, list)) return null;
         syncTransforms();
         return cycle.id;
     }
 
     function deleteCycle(id) {
-        writeList(CYCLE_STORAGE_KEY, loadCycles().filter(function(c) { return c.id !== id; }));
+        var next = loadCycles().filter(function(c) { return c.id !== id; });
+        if (!writeList(CYCLE_STORAGE_KEY, next)) return false;
         syncTransforms();
+        return true;
     }
 
     // ---- recipe keys & AI-assisted decode ----------------------------------
