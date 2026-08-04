@@ -125,6 +125,19 @@
                                     <button type="button" class="btn btn-secondary" @click="openCycleBuilder(null)" :disabled="!savedChains().length">
                                         <i class="fas fa-plus"></i> New per-word cycle
                                     </button>
+                                    <button type="button" class="btn btn-secondary" @click="chainExportAll">
+                                        <i class="fas fa-file-export"></i> Export
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" @click="$refs.chainImportFile.click()">
+                                        <i class="fas fa-file-import"></i> Import
+                                    </button>
+                                    <input
+                                        ref="chainImportFile"
+                                        type="file"
+                                        accept="application/json,.json"
+                                        hidden
+                                        @change="chainImportAll($event.target.files[0])"
+                                    >
                                     <small v-if="!savedChains().length" class="chain-manager-hint">Create a chain first — cycles rotate through saved chains.</small>
                                 </div>
 
@@ -139,6 +152,9 @@
                                             <small>{{ chainRegisteredEntry(chain) ? chainRegisteredEntry(chain).description : '' }}</small>
                                         </div>
                                         <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn" @click="chainCopyRecipe(chain, 'chain')" title="Copy recipe">
+                                                <i class="fas fa-copy"></i>
+                                            </button>
                                             <button type="button" class="chain-action-btn" @click="openChainBuilder(chain)" title="Edit">
                                                 <i class="fas fa-pen"></i>
                                             </button>
@@ -157,6 +173,7 @@
                                         </div>
                                         <div v-if="chainDecodeOpenKey === chainDecodeKey('chain', chain.id)" class="chain-decode-box">
                                             <textarea v-model="chainDecodeInput" placeholder="Paste the transformed text to decode..."></textarea>
+                                            <openrouter-model-select v-model="chainDecodeModel" label="Decode model"></openrouter-model-select>
                                             <button type="button" class="btn btn-secondary" :disabled="chainDecodeLoading" @click="chainRunAiDecode(chain, 'chain')">
                                                 {{ chainDecodeLoading ? 'Decoding…' : 'Decode with AI' }}
                                             </button>
@@ -177,6 +194,9 @@
                                             <small>{{ cycleRegisteredEntry(cycle) ? cycleRegisteredEntry(cycle).description : '' }}</small>
                                         </div>
                                         <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn" @click="chainCopyRecipe(cycle, 'cycle')" title="Copy recipe">
+                                                <i class="fas fa-copy"></i>
+                                            </button>
                                             <button type="button" class="chain-action-btn" @click="openCycleBuilder(cycle)" title="Edit">
                                                 <i class="fas fa-pen"></i>
                                             </button>
@@ -195,6 +215,7 @@
                                         </div>
                                         <div v-if="chainDecodeOpenKey === chainDecodeKey('cycle', cycle.id)" class="chain-decode-box">
                                             <textarea v-model="chainDecodeInput" placeholder="Paste the transformed text to decode..."></textarea>
+                                            <openrouter-model-select v-model="chainDecodeModel" label="Decode model"></openrouter-model-select>
                                             <button type="button" class="btn btn-secondary" :disabled="chainDecodeLoading" @click="chainRunAiDecode(cycle, 'cycle')">
                                                 {{ chainDecodeLoading ? 'Decoding…' : 'Decode with AI' }}
                                             </button>

@@ -74,7 +74,8 @@ class TransformTool extends Tool {
             chainDecodeInput: '',
             chainDecodeOutput: '',
             chainDecodeLoading: false,
-            chainDecodeError: ''
+            chainDecodeError: '',
+            chainDecodeModel: localStorage.getItem('chain-decode-model') || localStorage.getItem('translate-model') || ''
         };
     }
 
@@ -369,7 +370,12 @@ class TransformTool extends Tool {
                 const t = window.transforms[key];
                 if (!t) return;
                 const options = {};
-                (t.configurableOptions || []).forEach(opt => { options[opt.id] = opt.default; });
+                const prefs = typeof this.getMergedOptionsForTransform === 'function'
+                    ? this.getMergedOptionsForTransform(t.name)
+                    : {};
+                (t.configurableOptions || []).forEach(opt => {
+                    options[opt.id] = (prefs && prefs[opt.id] != null) ? prefs[opt.id] : opt.default;
+                });
                 this.chainDraftNodes.push({ transform: key, options });
                 this.chainNodePickerQuery = '';
             },
@@ -533,6 +539,53 @@ class TransformTool extends Tool {
                 this.pruneFavoritesForMissingTransforms();
                 this.showNotification('Cycle deleted', 'success', 'fas fa-trash');
             },
+            chainCopyRecipe: function(entity, kind) {
+                const recipe = window.TransformChains.describeRecipe(entity, kind);
+                this.copyToClipboard(recipe);
+                this.showNotification('Recipe copied', 'success', 'fas fa-copy');
+            },
+            chainExportAll: function() {
+                const payload = {
+                    version: 1,
+                    chains: window.TransformChains.loadChains(),
+                    cycles: window.TransformChains.loadCycles()
+                };
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'p4rs3ltongv3-chains.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            },
+            chainImportAll: function(file) {
+                const reader = new FileReader();
+                const self = this;
+                reader.onload = function() {
+                    try {
+                        const data = JSON.parse(reader.result);
+                        (data.chains || []).forEach(function(c) {
+                            window.TransformChains.saveChain({
+                                id: c.id,
+                                name: c.name,
+                                nodes: c.nodes
+                            });
+                        });
+                        (data.cycles || []).forEach(function(cy) {
+                            window.TransformChains.saveCycle({
+                                id: cy.id,
+                                name: cy.name,
+                                chainIds: cy.chainIds
+                            });
+                        });
+                        self.refreshChainsTransforms();
+                        self.showNotification('Chains imported', 'success', 'fas fa-file-import');
+                    } catch (e) {
+                        self.showNotification('Import failed: ' + (e.message || 'invalid file'), 'error');
+                    }
+                };
+                reader.readAsText(file);
+            },
 
             // -- AI-assisted decode for chains/cycles that can't mechanically reverse --
 
@@ -555,8 +608,11 @@ class TransformTool extends Tool {
                     return;
                 }
                 const recipe = window.TransformChains.describeRecipe(entity, kind);
+                if (this.chainDecodeModel) {
+                    localStorage.setItem('chain-decode-model', this.chainDecodeModel);
+                }
                 this.chainDecodeLoading = true;
-                window.TransformChains.aiDecode(recipe, this.chainDecodeInput)
+                window.TransformChains.aiDecode(recipe, this.chainDecodeInput, { model: this.chainDecodeModel })
                     .then(text => { this.chainDecodeOutput = text; })
                     .catch(e => { this.chainDecodeError = e.message || 'Decode failed.'; })
                     .finally(() => { this.chainDecodeLoading = false; });
