@@ -104,7 +104,7 @@
                             </div>
                         </div>
 
-                        <!-- Chains: ordered transform pipelines, and per-word cycles across them -->
+                        <!-- Recipes: staged pipelines, legacy free-form chains, and per-word cycles -->
                         <div class="transform-section chain-manager">
                             <button
                                 type="button"
@@ -114,13 +114,16 @@
                             >
                                 <i class="fas" :class="chainManageOpen ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
                                 <i class="fas fa-link"></i>
-                                Chains
-                                <small>Combine transforms into a pipeline, or rotate several across words</small>
+                                Recipes &amp; chains
+                                <small>Build a staged recipe, or rotate saved recipes across words</small>
                             </button>
                             <div v-if="chainManageOpen" class="chain-manager-body">
                                 <div class="chain-manager-actions">
-                                    <button type="button" class="btn btn-secondary" @click="openChainBuilder(null)">
-                                        <i class="fas fa-plus"></i> New chain
+                                    <button type="button" class="btn btn-secondary" @click="openRecipeBuilder(null)">
+                                        <i class="fas fa-plus"></i> New recipe
+                                    </button>
+                                    <button type="button" class="btn btn-secondary chain-legacy-button" @click="setLegacyFreeformBuilder(true)">
+                                        <i class="fas fa-sliders"></i> Free-form (legacy)
                                     </button>
                                     <button type="button" class="btn btn-secondary" @click="openCycleBuilder(null)" :disabled="!savedChains().length">
                                         <i class="fas fa-plus"></i> New per-word cycle
@@ -138,17 +141,19 @@
                                         hidden
                                         @change="chainImportAll($event.target.files[0]); $event.target.value = ''"
                                     >
-                                    <small v-if="!savedChains().length" class="chain-manager-hint">Create a chain first — cycles rotate through saved chains.</small>
+                                    <small v-if="!savedChains().length" class="chain-manager-hint">Create a recipe first — cycles rotate through saved recipes.</small>
                                 </div>
 
                                 <div v-if="savedChains().length" class="chain-list">
-                                    <h5>Chains</h5>
+                                    <h5>Recipes &amp; free-form chains</h5>
                                     <div v-for="chain in savedChains()" :key="chain.id" class="chain-list-item">
                                         <div class="chain-list-item-main">
                                             <strong>{{ chain.name }}</strong>
                                             <span class="chain-badge" :class="chainIsReversibleNow(chain) ? 'chain-badge-reversible' : 'chain-badge-ai-only'">
                                                 {{ chainIsReversibleNow(chain) ? 'Reversible' : 'AI-decode only' }}
                                             </span>
+                                            <span v-if="recipeHasCarrier(chain)" class="chain-badge chain-badge-carrier">Carrier</span>
+                                            <span v-if="chain.kind !== 'staged'" class="chain-badge chain-badge-legacy">Legacy</span>
                                             <small>{{ chainRegisteredEntry(chain) ? chainRegisteredEntry(chain).description : '' }}</small>
                                         </div>
                                         <div class="chain-list-item-actions">
@@ -226,8 +231,8 @@
                                 </div>
 
                                 <p v-if="!savedChains().length && !savedCycles().length" class="chain-manager-empty">
-                                    No chains yet. A chain applies several transforms in sequence to your whole
-                                    input; a cycle rotates several chains across successive words. Both appear as
+                                    No recipes yet. A recipe applies staged transforms to your whole input; a
+                                    cycle rotates several recipes across successive words. Both appear as
                                     buttons on this page under <strong>chains</strong> once saved.
                                 </p>
                             </div>
@@ -836,7 +841,7 @@
                         <div class="transform-options-panel-header">
                             <h3 id="chain-builder-title">
                                 {{ chainBuilderEditId ? 'Edit' : 'New' }}
-                                {{ chainBuilderKind === 'chain' ? 'chain' : 'per-word cycle' }}
+                                {{ chainBuilderKind === 'cycle' ? 'per-word cycle' : (recipeBuilderMode === 'staged' ? 'recipe' : 'free-form chain') }}
                             </h3>
                             <button type="button" class="transform-options-close" @click="closeChainBuilder" title="Close" aria-label="Close">
                                 <i class="fas fa-times"></i>
@@ -844,8 +849,144 @@
                         </div>
 
                         <div class="transform-options-panel-body chain-builder-body">
-                            <!-- Chain builder: ordered list of transform nodes -->
-                            <template v-if="chainBuilderKind === 'chain'">
+                            <!-- Default staged recipe builder -->
+                            <template v-if="chainBuilderKind === 'chain' && recipeBuilderMode === 'staged'">
+                                <label class="transform-options-field">
+                                    Name
+                                    <input type="text" v-model="stagedDraft.name" class="transform-options-text" placeholder="e.g. Latin cipher carrier" autocomplete="off" />
+                                </label>
+
+                                <div class="recipe-template-section">
+                                    <span class="recipe-section-label">Start from a template</span>
+                                    <div class="recipe-template-chips" role="group" aria-label="Recipe templates">
+                                        <button
+                                            v-for="template in recipeTemplates()"
+                                            :key="template.id"
+                                            type="button"
+                                            class="category-chip recipe-template-chip"
+                                            :class="{ 'active-filter': recipeTemplateId === template.id }"
+                                            @click="applyRecipeTemplate(template.id)"
+                                        >
+                                            {{ template.name }}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="recipe-stage-rail">
+                                    <section
+                                        v-for="(stageId, stageIndex) in recipeStageOrder()"
+                                        :key="stageId"
+                                        class="recipe-stage"
+                                        :class="{ 'recipe-stage-required': stageId === 'obfuscate' }"
+                                    >
+                                        <header class="recipe-stage-header">
+                                            <span class="chain-node-index">{{ stageIndex + 1 }}</span>
+                                            <div>
+                                                <strong>{{ recipeStageLabel(stageId) }}</strong>
+                                                <small>{{ stageId === 'obfuscate' ? 'At least one step' : 'Optional' }}</small>
+                                            </div>
+                                        </header>
+
+                                        <template v-if="stageId === 'translate'">
+                                            <button
+                                                v-if="!stagedDraft.stages.translate"
+                                                type="button"
+                                                class="recipe-stage-add"
+                                                @click="stagedSetTranslateEnabled(true)"
+                                            >
+                                                <i class="fas fa-plus"></i> Add Translate
+                                            </button>
+                                            <div v-else class="recipe-special-stage">
+                                                <label class="transform-options-field">
+                                                    Language
+                                                    <select v-model="stagedDraft.stages.translate.lang" class="transform-options-select">
+                                                        <optgroup label="Major languages">
+                                                            <option v-for="lang in translateMainLangs" :key="lang.code" :value="lang.code">{{ lang.name }}</option>
+                                                        </optgroup>
+                                                        <optgroup label="Dead &amp; exotic">
+                                                            <option v-for="lang in translateExoticLangs" :key="lang.code" :value="lang.code">{{ lang.name }}</option>
+                                                        </optgroup>
+                                                        <optgroup v-if="translateCustomLangs.length" label="Custom">
+                                                            <option v-for="lang in translateCustomLangs" :key="lang.name" :value="lang.name">{{ lang.name }}</option>
+                                                        </optgroup>
+                                                    </select>
+                                                </label>
+                                                <openrouter-model-select v-model="stagedDraft.stages.translate.model" label="Translation model"></openrouter-model-select>
+                                                <span class="chain-badge chain-badge-ai-only">AI / not mechanically reversible</span>
+                                                <button type="button" class="recipe-stage-remove" @click="stagedSetTranslateEnabled(false)">Remove Translate</button>
+                                            </div>
+                                        </template>
+
+                                        <template v-else-if="stageId === 'carrier'">
+                                            <div class="recipe-carrier-options">
+                                                <label><input type="radio" name="recipe-carrier" :checked="!stagedDraft.stages.carrier" @change="stagedSetCarrier('')" /> None</label>
+                                                <label><input type="radio" name="recipe-carrier" value="qr" :checked="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'qr'" @change="stagedSetCarrier('qr')" /> QR</label>
+                                                <label><input type="radio" name="recipe-carrier" value="emoji_stego" :checked="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" @change="stagedSetCarrier('emoji_stego')" /> Emoji stego</label>
+                                            </div>
+                                            <label v-if="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" class="transform-options-field">
+                                                Carrier emoji
+                                                <input type="text" v-model="stagedDraft.stages.carrier.options.carrierEmoji" class="transform-options-text recipe-emoji-input" maxlength="16" />
+                                            </label>
+                                        </template>
+
+                                        <template v-else>
+                                            <div v-if="stagedStageNodes(stageId).length" class="recipe-stage-nodes">
+                                                <div v-for="(node, nodeIndex) in stagedStageNodes(stageId)" :key="nodeIndex" class="chain-node-item">
+                                                    <div class="chain-node-row">
+                                                        <span class="chain-node-name">{{ chainNodeName(node) }}</span>
+                                                        <span class="chain-node-controls">
+                                                            <button type="button" class="chain-action-btn" :disabled="nodeIndex === 0" @click="stagedMoveNode(stageId, nodeIndex, -1)" title="Move up">
+                                                                <i class="fas fa-arrow-up"></i>
+                                                            </button>
+                                                            <button type="button" class="chain-action-btn" :disabled="nodeIndex === stagedStageNodes(stageId).length - 1" @click="stagedMoveNode(stageId, nodeIndex, 1)" title="Move down">
+                                                                <i class="fas fa-arrow-down"></i>
+                                                            </button>
+                                                            <button v-if="chainNodeOptionFields(node).length" type="button" class="chain-action-btn" @click="stagedToggleNodeOptions(stageId, nodeIndex)" title="Options">
+                                                                <i class="fas fa-gear"></i>
+                                                            </button>
+                                                            <button type="button" class="chain-action-btn chain-action-btn-danger" @click="stagedRemoveNode(stageId, nodeIndex)" title="Remove">
+                                                                <i class="fas fa-times"></i>
+                                                            </button>
+                                                        </span>
+                                                    </div>
+                                                    <div v-if="stagedNodeOptionsOpen(stageId, nodeIndex)" class="chain-node-options">
+                                                        <div v-for="opt in chainNodeOptionFields(node)" :key="opt.id" class="transform-options-field">
+                                                            <label :for="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id">{{ opt.label }}</label>
+                                                            <input v-if="opt.type === 'boolean'" :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" type="checkbox" class="transform-options-checkbox" :checked="node.options[opt.id]" @change="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.checked)" />
+                                                            <select v-else-if="opt.type === 'select'" :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" class="transform-options-select" :value="node.options[opt.id]" @change="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.value)">
+                                                                <option v-for="choice in opt.options" :key="String(choice.value)" :value="choice.value">{{ choice.label }}</option>
+                                                            </select>
+                                                            <input v-else-if="opt.type === 'number'" :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" type="number" class="transform-options-number" :value="node.options[opt.id]" :min="opt.min != null ? opt.min : null" :max="opt.max != null ? opt.max : null" :step="opt.step != null ? opt.step : 1" @input="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.value === '' ? opt.default : Number($event.target.value))" />
+                                                            <input v-else :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" type="text" class="transform-options-text" :value="node.options[opt.id]" @input="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.value)" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <button type="button" class="recipe-stage-add" @click="stagedTogglePicker(stageId)">
+                                                <i class="fas" :class="stagedPickerStage === stageId ? 'fa-minus' : 'fa-plus'"></i>
+                                                {{ stagedStageNodes(stageId).length ? 'Add another' : 'Add ' + recipeStageLabel(stageId) }}
+                                            </button>
+                                            <div v-if="stagedPickerStage === stageId" class="chain-node-picker recipe-stage-picker">
+                                                <input type="search" v-model="stagedPickerQuery" :placeholder="'Search ' + recipeStageLabel(stageId).toLowerCase() + ' transforms...'" autocomplete="off" spellcheck="false" />
+                                                <div class="chain-node-picker-results">
+                                                    <button v-for="candidate in stagedNodeCandidates(stageId)" :key="candidate.key" type="button" class="chain-node-picker-result" @click="stagedAddNode(stageId, candidate.key)">
+                                                        <i class="fas fa-plus"></i> {{ candidate.name }}
+                                                        <small>{{ candidate.category }}</small>
+                                                    </button>
+                                                    <small v-if="!stagedNodeCandidates(stageId).length" class="chain-manager-hint">No allowed transforms match.</small>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </section>
+                                </div>
+                            </template>
+
+                            <!-- LEGACY_FREEFORM_BUILDER: unrestricted ordered transform list -->
+                            <template v-else-if="chainBuilderKind === 'chain'">
+                                <p class="recipe-legacy-notice">
+                                    <span class="chain-badge chain-badge-legacy">Legacy</span>
+                                    Free-form chains ignore stage rules and may be removed in a future version.
+                                </p>
                                 <label class="transform-options-field">
                                     Name
                                     <input type="text" v-model="chainDraftName" class="transform-options-text" placeholder="e.g. ROT13 then Base64" autocomplete="off" />
@@ -967,6 +1108,18 @@
                                     Name
                                     <input type="text" v-model="cycleDraftName" class="transform-options-text" placeholder="e.g. Alternate Base64 / Caesar" autocomplete="off" />
                                 </label>
+                                <label class="recipe-cycle-mode">
+                                    <input
+                                        type="checkbox"
+                                        v-model="cycleDraftMode"
+                                        true-value="one_way"
+                                        false-value="word_safe"
+                                    />
+                                    <span>
+                                        <strong>One-way / AI-decode</strong>
+                                        <small>Allows recipes that are not word-safe. Leave off for reversible word-safe cycles.</small>
+                                    </span>
+                                </label>
 
                                 <div class="chain-node-list">
                                     <div v-for="(chainId, index) in cycleDraftChainIds" :key="index" class="chain-node-item">
@@ -1016,7 +1169,7 @@
                             <button
                                 type="button"
                                 class="transform-options-btn transform-options-btn-primary"
-                                @click="chainBuilderKind === 'chain' ? saveChainDraft() : saveCycleDraft()"
+                                @click="chainBuilderKind === 'cycle' ? saveCycleDraft() : (recipeBuilderMode === 'staged' ? saveStagedRecipe() : saveChainDraft())"
                             >
                                 Save
                             </button>

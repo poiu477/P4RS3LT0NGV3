@@ -62,6 +62,22 @@ class TransformTool extends Tool {
             chainManageOpen: false,
             chainBuilderOpen: false,
             chainBuilderKind: 'chain', // 'chain' | 'cycle'
+            recipeBuilderMode: 'staged', // 'staged' | 'legacy'
+            recipeTemplateId: '',
+            stagedDraft: {
+                name: '',
+                stages: {
+                    normalize: null,
+                    translate: null,
+                    obfuscate: [],
+                    present: null,
+                    conceal: null,
+                    carrier: null
+                }
+            },
+            stagedPickerStage: '',
+            stagedPickerQuery: '',
+            stagedOpenNodeOptions: null,
             chainBuilderEditId: null,
             chainBuilderError: '',
             chainDraftName: '',
@@ -70,6 +86,7 @@ class TransformTool extends Tool {
             chainOpenNodeOptionsIndex: null,
             cycleDraftName: '',
             cycleDraftChainIds: [],
+            cycleDraftMode: 'word_safe',
             chainDecodeOpenKey: '',
             chainDecodeInput: '',
             chainDecodeOutput: '',
@@ -336,6 +353,9 @@ class TransformTool extends Tool {
                 const chain = this.savedChains().find(c => c.id === chainId);
                 return chain ? chain.name : '(deleted chain)';
             },
+            recipeHasCarrier: function(recipe) {
+                return !!(recipe && recipe.kind === 'staged' && recipe.stages && recipe.stages.carrier);
+            },
             refreshChainsTransforms: function() {
                 // Same rebuild custom spelling alphabets use after a CRUD change —
                 // generic over window.transforms, not spelling-specific.
@@ -344,7 +364,162 @@ class TransformTool extends Tool {
                 }
             },
 
-            // -- chain (node sequence) builder --
+            // -- staged recipe builder --
+
+            stagedEmptyDraft: function() {
+                return {
+                    name: '',
+                    stages: {
+                        normalize: null,
+                        translate: null,
+                        obfuscate: [],
+                        present: null,
+                        conceal: null,
+                        carrier: null
+                    }
+                };
+            },
+            recipeStageOrder: function() {
+                return window.TransformRecipeStages ? window.TransformRecipeStages.STAGE_ORDER : [];
+            },
+            recipeStageLabel: function(stageId) {
+                const labels = {
+                    normalize: 'Normalize',
+                    translate: 'Translate',
+                    obfuscate: 'Obfuscate',
+                    present: 'Present',
+                    conceal: 'Conceal',
+                    carrier: 'Carrier'
+                };
+                return labels[stageId] || stageId;
+            },
+            recipeTemplates: function() {
+                return window.TransformRecipeStages ? window.TransformRecipeStages.TEMPLATES : [];
+            },
+            openRecipeBuilder: function(existing) {
+                this.chainBuilderKind = 'chain';
+                this.recipeBuilderMode = 'staged';
+                this.chainBuilderEditId = existing ? existing.id : null;
+                this.stagedDraft = existing
+                    ? { name: existing.name, stages: JSON.parse(JSON.stringify(existing.stages || {})) }
+                    : this.stagedEmptyDraft();
+                this.recipeTemplateId = '';
+                this.stagedPickerStage = '';
+                this.stagedPickerQuery = '';
+                this.stagedOpenNodeOptions = null;
+                this.chainBuilderError = '';
+                this.chainBuilderOpen = true;
+            },
+            applyRecipeTemplate: function(templateId) {
+                const template = this.recipeTemplates().find(t => t.id === templateId);
+                if (!template) return;
+                this.recipeTemplateId = templateId;
+                this.$set(this.stagedDraft, 'stages', JSON.parse(JSON.stringify(template.stages)));
+                this.stagedPickerStage = '';
+                this.stagedPickerQuery = '';
+                this.chainBuilderError = '';
+            },
+            stagedStageNodes: function(stageId) {
+                const nodes = this.stagedDraft && this.stagedDraft.stages
+                    ? this.stagedDraft.stages[stageId]
+                    : null;
+                return Array.isArray(nodes) ? nodes : [];
+            },
+            stagedNodeCandidates: function(stageId) {
+                if (!window.transforms || !window.TransformRecipeStages) return [];
+                const query = (this.stagedPickerQuery || '').trim().toLowerCase();
+                return Object.keys(window.transforms)
+                    .filter(key => window.TransformRecipeStages.isTransformAllowedInStage(
+                        stageId,
+                        key,
+                        window.transforms
+                    ))
+                    .map(key => ({ key, t: window.transforms[key] }))
+                    .filter(({ t }) => t && t.name && (!query || t.name.toLowerCase().indexOf(query) !== -1))
+                    .sort((a, b) => a.t.name.localeCompare(b.t.name))
+                    .map(({ key, t }) => ({ key, name: t.name, category: t.category }));
+            },
+            stagedTogglePicker: function(stageId) {
+                this.stagedPickerStage = this.stagedPickerStage === stageId ? '' : stageId;
+                this.stagedPickerQuery = '';
+            },
+            stagedAddNode: function(stageId, key) {
+                const t = window.transforms && window.transforms[key];
+                if (!t || !window.TransformRecipeStages ||
+                    !window.TransformRecipeStages.isTransformAllowedInStage(stageId, key, window.transforms)) {
+                    return;
+                }
+                const options = {};
+                const prefs = typeof this.getMergedOptionsForTransform === 'function'
+                    ? this.getMergedOptionsForTransform(t.name)
+                    : {};
+                (t.configurableOptions || []).forEach(opt => {
+                    options[opt.id] = prefs && prefs[opt.id] != null ? prefs[opt.id] : opt.default;
+                });
+                const nodes = this.stagedStageNodes(stageId).slice();
+                nodes.push({ transform: key, options });
+                this.$set(this.stagedDraft.stages, stageId, nodes);
+                this.stagedPickerQuery = '';
+                this.chainBuilderError = '';
+            },
+            stagedRemoveNode: function(stageId, index) {
+                const nodes = this.stagedStageNodes(stageId).slice();
+                nodes.splice(index, 1);
+                this.$set(this.stagedDraft.stages, stageId, nodes.length ? nodes : null);
+                this.stagedOpenNodeOptions = null;
+            },
+            stagedMoveNode: function(stageId, index, direction) {
+                const nodes = this.stagedStageNodes(stageId).slice();
+                const target = index + direction;
+                if (target < 0 || target >= nodes.length) return;
+                const node = nodes.splice(index, 1)[0];
+                nodes.splice(target, 0, node);
+                this.$set(this.stagedDraft.stages, stageId, nodes);
+                this.stagedOpenNodeOptions = null;
+            },
+            stagedToggleNodeOptions: function(stageId, index) {
+                const open = this.stagedOpenNodeOptions;
+                this.stagedOpenNodeOptions = open && open.stageId === stageId && open.index === index
+                    ? null
+                    : { stageId, index };
+            },
+            stagedNodeOptionsOpen: function(stageId, index) {
+                const open = this.stagedOpenNodeOptions;
+                return !!(open && open.stageId === stageId && open.index === index);
+            },
+            stagedSetNodeOption: function(stageId, index, optId, value) {
+                const node = this.stagedStageNodes(stageId)[index];
+                if (node) this.$set(node.options, optId, value);
+            },
+            stagedSetTranslateEnabled: function(enabled) {
+                this.$set(this.stagedDraft.stages, 'translate', enabled
+                    ? { type: 'translate', lang: 'la', model: this.translateModel || '' }
+                    : null);
+            },
+            stagedSetCarrier: function(type) {
+                this.$set(this.stagedDraft.stages, 'carrier', type
+                    ? { type, options: type === 'emoji_stego' ? { carrierEmoji: '🐍' } : {} }
+                    : null);
+            },
+            saveStagedRecipe: function() {
+                const draft = {
+                    id: this.chainBuilderEditId,
+                    name: (this.stagedDraft.name || '').trim(),
+                    kind: 'staged',
+                    stages: this.stagedDraft.stages
+                };
+                const id = window.TransformChains.saveRecipe(draft);
+                if (!id) {
+                    this.chainBuilderError = window.TransformChains.getLastMutationError() ||
+                        'Could not save recipe.';
+                    return;
+                }
+                this.chainBuilderOpen = false;
+                this.refreshChainsTransforms();
+                this.showNotification('Recipe saved — find it under chains', 'success', 'fas fa-link');
+            },
+
+            // -- LEGACY_FREEFORM_BUILDER: remove with free-form chain support --
 
             chainNodeCandidates: function() {
                 if (!window.transforms) return [];
@@ -357,7 +532,12 @@ class TransformTool extends Tool {
                     .map(({ key, t }) => ({ key, name: t.name, category: t.category }));
             },
             openChainBuilder: function(existing) {
+                if (existing && existing.kind === 'staged') {
+                    this.openRecipeBuilder(existing);
+                    return;
+                }
                 this.chainBuilderKind = 'chain';
+                this.recipeBuilderMode = 'legacy';
                 this.chainBuilderEditId = existing ? existing.id : null;
                 this.chainDraftName = existing ? existing.name : '';
                 this.chainDraftNodes = existing ? JSON.parse(JSON.stringify(existing.nodes || [])) : [];
@@ -365,6 +545,10 @@ class TransformTool extends Tool {
                 this.chainOpenNodeOptionsIndex = null;
                 this.chainBuilderError = '';
                 this.chainBuilderOpen = true;
+            },
+            setLegacyFreeformBuilder: function(enabled) {
+                // LEGACY_FREEFORM_BUILDER: explicit escape hatch for unrestricted transform stacks.
+                if (enabled) this.openChainBuilder(null);
             },
             chainAddNode: function(key) {
                 const t = window.transforms[key];
@@ -448,6 +632,7 @@ class TransformTool extends Tool {
                 this.chainBuilderEditId = existing ? existing.id : null;
                 this.cycleDraftName = existing ? existing.name : '';
                 this.cycleDraftChainIds = existing ? existing.chainIds.slice() : [];
+                this.cycleDraftMode = existing && existing.mode === 'one_way' ? 'one_way' : 'word_safe';
                 this.chainBuilderError = '';
                 this.chainBuilderOpen = true;
             },
@@ -493,7 +678,8 @@ class TransformTool extends Tool {
                 const id = window.TransformChains.saveCycle({
                     id: this.chainBuilderEditId,
                     name,
-                    chainIds: this.cycleDraftChainIds
+                    chainIds: this.cycleDraftChainIds,
+                    mode: this.cycleDraftMode
                 });
                 if (!id) {
                     this.chainBuilderError = window.TransformChains.getLastMutationError() ||
@@ -581,18 +767,21 @@ class TransformTool extends Tool {
                             }
                         };
                         (data.chains || []).forEach(function(c) {
-                            const result = window.TransformChains.saveChain({
-                                id: c.id,
-                                name: c.name,
-                                nodes: c.nodes
-                            });
+                            const result = c && c.kind === 'staged'
+                                ? window.TransformChains.saveRecipe(c)
+                                : window.TransformChains.saveChain({
+                                    id: c.id,
+                                    name: c.name,
+                                    nodes: c.nodes
+                                });
                             recordSaveResult(result);
                         });
                         (data.cycles || []).forEach(function(cy) {
                             const result = window.TransformChains.saveCycle({
                                 id: cy.id,
                                 name: cy.name,
-                                chainIds: cy.chainIds
+                                chainIds: cy.chainIds,
+                                mode: cy.mode
                             });
                             recordSaveResult(result);
                         });
