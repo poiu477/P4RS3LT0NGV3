@@ -136,7 +136,7 @@
                                         type="file"
                                         accept="application/json,.json"
                                         hidden
-                                        @change="chainImportAll($event.target.files[0])"
+                                        @change="chainImportAll($event.target.files[0]); $event.target.value = ''"
                                     >
                                     <small v-if="!savedChains().length" class="chain-manager-hint">Create a chain first — cycles rotate through saved chains.</small>
                                 </div>

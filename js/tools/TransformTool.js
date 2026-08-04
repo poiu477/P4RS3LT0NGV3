@@ -564,21 +564,48 @@ class TransformTool extends Tool {
                 reader.onload = function() {
                     try {
                         const data = JSON.parse(reader.result);
+                        let importedCount = 0;
+                        let failedCount = 0;
+                        const mutationErrors = [];
+                        const recordSaveResult = function(result) {
+                            if (result) {
+                                importedCount += 1;
+                                return;
+                            }
+                            failedCount += 1;
+                            if (typeof window.TransformChains.getLastMutationError === 'function') {
+                                const mutationError = window.TransformChains.getLastMutationError();
+                                if (mutationError && mutationErrors.indexOf(mutationError) === -1) {
+                                    mutationErrors.push(mutationError);
+                                }
+                            }
+                        };
                         (data.chains || []).forEach(function(c) {
-                            window.TransformChains.saveChain({
+                            const result = window.TransformChains.saveChain({
                                 id: c.id,
                                 name: c.name,
                                 nodes: c.nodes
                             });
+                            recordSaveResult(result);
                         });
                         (data.cycles || []).forEach(function(cy) {
-                            window.TransformChains.saveCycle({
+                            const result = window.TransformChains.saveCycle({
                                 id: cy.id,
                                 name: cy.name,
                                 chainIds: cy.chainIds
                             });
+                            recordSaveResult(result);
                         });
                         self.refreshChainsTransforms();
+                        if (failedCount) {
+                            let message = 'Import incomplete: ' + importedCount + ' imported, ' +
+                                failedCount + ' failed';
+                            if (mutationErrors.length) {
+                                message += '. ' + mutationErrors.join('; ');
+                            }
+                            self.showNotification(message, 'error', 'fas fa-exclamation-triangle');
+                            return;
+                        }
                         self.showNotification('Chains imported', 'success', 'fas fa-file-import');
                     } catch (e) {
                         self.showNotification('Import failed: ' + (e.message || 'invalid file'), 'error');
