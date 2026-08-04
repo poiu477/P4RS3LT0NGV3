@@ -30,6 +30,10 @@
     var CYCLE_PREFIX = 'cycle_';
     var CATEGORY = 'chains';
     var lastMutationError = '';
+    var WORD_UNSAFE_KEYS = {
+        base64: true,
+        base64url: true
+    };
 
     // ---- storage ----------------------------------------------------------
 
@@ -67,6 +71,7 @@
         if (typeof cycle.name !== 'string') return null;
         if (!Array.isArray(cycle.chainIds)) return null;
         return Object.assign({}, cycle, {
+            mode: cycle.mode === 'one_way' ? 'one_way' : 'word_safe',
             chainIds: cycle.chainIds.filter(function(id) {
                 return typeof id === 'string' && id.length > 0;
             })
@@ -177,8 +182,11 @@
         if (!Array.isArray(cycle.chainIds) || !cycle.chainIds.length) {
             return 'Add at least one chain to the cycle.';
         }
+        if (cycle.mode != null && cycle.mode !== 'word_safe' && cycle.mode !== 'one_way') {
+            return 'Cycle mode must be "word_safe" or "one_way".';
+        }
         var known = Object.create(null);
-        loadChains().forEach(function(c) { known[c.id] = true; });
+        loadChains().forEach(function(c) { known[c.id] = c; });
         for (var i = 0; i < cycle.chainIds.length; i++) {
             var cid = cycle.chainIds[i];
             if (typeof cid !== 'string' || !cid) {
@@ -186,6 +194,9 @@
             }
             if (!known[cid]) {
                 return 'Cycle references a missing chain (' + cid + ').';
+            }
+            if (cycle.mode !== 'one_way' && !recipeIsWordSafe(known[cid])) {
+                return 'Cycle recipe "' + known[cid].name + '" is not word-safe. Use one_way mode instead.';
             }
         }
         return null;
@@ -495,9 +506,29 @@
         }
     }
 
+    /**
+     * Whether a chain or staged recipe can safely transform one word at a time
+     * without changing the cycle splitter's word boundaries.
+     */
+    function recipeIsWordSafe(chain) {
+        if (!chain) return false;
+        var nodes = chain.kind === 'staged' ? getStagedNodes(chain) : (chain.nodes || []);
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            if (WORD_UNSAFE_KEYS[node.transform]) return false;
+            if (node.type === 'translate' || node.type === 'qr' || node.type === 'emoji_stego') {
+                return false;
+            }
+        }
+        return cycleRoundTripsCleanly([chain]);
+    }
+
     function registerCycle(cycle) {
         var chains = resolveCycleChains(cycle);
-        var reversible = cycleRoundTripsCleanly(chains);
+        var mode = cycle.mode === 'one_way' ? 'one_way' : 'word_safe';
+        var reversible = mode === 'word_safe' &&
+            chains.every(recipeIsWordSafe) &&
+            cycleRoundTripsCleanly(chains);
         global.transforms[CYCLE_PREFIX + cycle.id] = {
             name: cycle.name,
             category: CATEGORY,
@@ -636,6 +667,9 @@
             return null;
         }
 
+        cycle = Object.assign({}, cycle, {
+            mode: cycle.mode === 'one_way' ? 'one_way' : 'word_safe'
+        });
         var list = loadCycles();
         var now = Date.now();
         if (cycle.id) {
@@ -780,6 +814,7 @@
         syncTransforms: syncTransforms,
         chainIsReversible: chainIsReversible,
         cycleRoundTripsCleanly: cycleRoundTripsCleanly,
+        recipeIsWordSafe: recipeIsWordSafe,
         describeChain: describeChain,
         describeRecipe: describeRecipe,
         buildDecodePrompt: buildDecodePrompt,

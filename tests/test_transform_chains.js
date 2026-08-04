@@ -98,13 +98,31 @@ assert.strictEqual(
     beforeEmptyCycleStorage
 );
 assert.strictEqual(JSON.stringify(TC.loadCycles()), beforeEmptyCycle);
-const cyId = TC.saveCycle({ name: 'C', chainIds: [id] });
+assert.strictEqual(TC.recipeIsWordSafe(chains[0]), false);
+assert.strictEqual(TC.saveCycle({ name: 'Unsafe default', chainIds: [id] }), null);
+assert.match(TC.getLastMutationError(), /Demo/);
+
+const cyId = TC.saveCycle({ name: 'C', chainIds: [id], mode: 'one_way' });
 assert.ok(cyId);
-const cycles = TC.loadCycles();
+let cycles = TC.loadCycles();
 assert.strictEqual(cycles.length, 1);
 assert.strictEqual(cycles[0].id, cyId);
 assert.strictEqual(cycles[0].name, 'C');
+assert.strictEqual(cycles[0].mode, 'one_way');
 assert.deepStrictEqual(Array.from(cycles[0].chainIds), [id]);
+assert.strictEqual(ctx.transforms[`cycle_${cyId}`].canDecode, false);
+assert.strictEqual(ctx.transforms[`cycle_${cyId}`].reverse, null);
+
+const safeId = TC.saveChain({
+    name: 'Safe Caesar',
+    nodes: [{ transform: 'caesar', options: { shift: 3 } }]
+});
+const safeChain = TC.loadChains().find((chain) => chain.id === safeId);
+assert.strictEqual(TC.recipeIsWordSafe(safeChain), true);
+const safeCycleId = TC.saveCycle({ name: 'Safe default', chainIds: [safeId] });
+assert.ok(safeCycleId);
+cycles = TC.loadCycles();
+assert.strictEqual(cycles.find((cycle) => cycle.id === safeCycleId).mode, 'word_safe');
 
 // write failure rollback on deleteChain
 const beforeChains = JSON.stringify(TC.loadChains());
