@@ -6,20 +6,12 @@ const vm = require('vm');
 
 function createContext() {
     const store = Object.create(null);
-    let quotaBlocked = false;
     const ctx = {
         window: null,
         console,
         localStorage: {
             getItem: (k) => (k in store ? store[k] : null),
-            setItem: (k, v) => {
-                if (quotaBlocked) {
-                    const err = new Error('quota');
-                    throw err;
-                }
-                store[k] = String(v);
-            },
-            _block: (b) => { quotaBlocked = !!b; },
+            setItem: (k, v) => { store[k] = String(v); },
             _store: store
         }
     };
@@ -70,14 +62,22 @@ ctx.localStorage._store['transform-chains-v1'] = JSON.stringify(storedChains);
 const chains = TC.loadChains();
 assert.strictEqual(chains.length, 1);
 assert.strictEqual(chains[0].nodes.length, 2);
+assert.deepStrictEqual(
+    Array.from(chains[0].nodes, (node) => node.transform),
+    ['caesar', 'base64']
+);
+assert.strictEqual(chains[0].nodes[0].options.shift, 3);
+assert.deepStrictEqual(Object.keys(chains[0].nodes[1].options), []);
 
 // nesting reject
 TC.syncTransforms();
+const beforeNestedChains = JSON.stringify(TC.loadChains());
 const nested = TC.saveChain({
     name: 'Bad',
     nodes: [{ transform: 'chain_' + id, options: {} }]
 });
 assert.strictEqual(nested, null);
+assert.strictEqual(JSON.stringify(TC.loadChains()), beforeNestedChains);
 
 // describe includes options
 const recipe = TC.describeChain(chains[0]);
@@ -85,27 +85,48 @@ assert.ok(recipe.indexOf('caesar') !== -1);
 assert.ok(recipe.indexOf('"shift":3') !== -1 || recipe.indexOf('"shift": 3') !== -1);
 
 // cycle validation
+const beforeEmptyCycle = JSON.stringify(TC.loadCycles());
 assert.strictEqual(TC.saveCycle({ name: 'C', chainIds: [] }), null);
+assert.strictEqual(JSON.stringify(TC.loadCycles()), beforeEmptyCycle);
 const cyId = TC.saveCycle({ name: 'C', chainIds: [id] });
 assert.ok(cyId);
+const cycles = TC.loadCycles();
+assert.strictEqual(cycles.length, 1);
+assert.strictEqual(cycles[0].id, cyId);
+assert.strictEqual(cycles[0].name, 'C');
+assert.deepStrictEqual(Array.from(cycles[0].chainIds), [id]);
 
 // write failure rollback on deleteChain
 const beforeChains = JSON.stringify(TC.loadChains());
 const beforeCycles = JSON.stringify(TC.loadCycles());
-ctx.localStorage._block(true);
-// First write may throw inside writeList and return false — depending on implementation,
-// unblock after forcing failure path. Prefer stubbing by temporarily replacing setItem mid-delete:
-ctx.localStorage._block(false);
 let calls = 0;
+let failureFired = false;
+const writeKeys = [];
 const realSet = ctx.localStorage.setItem.bind(ctx.localStorage);
 ctx.localStorage.setItem = (k, v) => {
     calls += 1;
-    if (calls === 2) throw new Error('fail cycle write');
+    writeKeys.push(k);
+    if (calls === 2) {
+        failureFired = true;
+        throw new Error('fail cycle write');
+    }
     return realSet(k, v);
 };
 const deleted = TC.deleteChain(id);
 assert.strictEqual(deleted, false);
 ctx.localStorage.setItem = realSet;
+assert.strictEqual(failureFired, true);
+assert.strictEqual(calls, 3);
+assert.deepStrictEqual(writeKeys, [
+    'transform-chains-v1',
+    'transform-cycles-v1',
+    'transform-chains-v1'
+]);
+const storageKeys = Object.keys(ctx.localStorage._store).sort();
+assert.deepStrictEqual(storageKeys, ['transform-chains-v1', 'transform-cycles-v1']);
+assert.strictEqual(storageKeys.length, 2);
+assert.strictEqual(ctx.localStorage._store['transform-chains-v1'], beforeChains);
+assert.strictEqual(ctx.localStorage._store['transform-cycles-v1'], beforeCycles);
 assert.strictEqual(JSON.stringify(TC.loadChains()), beforeChains);
 assert.strictEqual(JSON.stringify(TC.loadCycles()), beforeCycles);
 
