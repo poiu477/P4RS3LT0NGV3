@@ -353,7 +353,6 @@ class TransformTool extends Tool {
                     .filter(({ t }) => t && t.name && !t.isChain && !t.isCycle)
                     .filter(({ t }) => !query || t.name.toLowerCase().indexOf(query) !== -1)
                     .sort((a, b) => a.t.name.localeCompare(b.t.name))
-                    .slice(0, 40)
                     .map(({ key, t }) => ({ key, name: t.name, category: t.category }));
             },
             openChainBuilder: function(existing) {
