@@ -33,6 +33,20 @@
                             autocorrect="off"
                             spellcheck="false"
                         />
+                        <div class="transform-apply-row">
+                            <button
+                                type="button"
+                                class="transform-apply-btn"
+                                :disabled="!activeTransform"
+                                @click="applySelectedTransform($event)"
+                            >
+                                <i class="fas" :class="transformIoMode === 'decode' ? 'fa-unlock' : 'fa-wand-magic-sparkles'"></i>
+                                {{ transformIoMode === 'decode' ? 'Decode' : 'Transform' }}
+                                <small v-if="activeTransform">{{ activeTransform.name }}</small>
+                            </button>
+                            <span v-if="!activeTransform" class="transform-apply-hint">Select a method or recipe below, then Transform</span>
+                            <span v-else-if="!transformSelectionApplied" class="transform-apply-hint">Selected — click Transform or click the tile again</span>
+                        </div>
                     </div>
 
                     <div class="output-section" v-if="transformOutput || transformOutputImage">
@@ -299,10 +313,10 @@
                                     <template v-for="item in getFilteredFavoriteDisplayItems()" :key="item.key">
                                         <div v-if="item.type === 'transform'" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(item.transform, $event)"
+                                                @click="selectOrApplyTransform(item.transform, $event)"
                                                 :class="'transform-button transform-category-' + getDisplayCategory(item.transform.name)"
-                                                :class="{ active: activeTransform === item.transform }"
-                                                :title="'Click to transform and copy: ' + item.transform.name"
+                                                :class="{ active: isTransformSelected(item.transform) }"
+                                                :title="'Select or apply: ' + item.transform.name"
                                             >
                                                 <span class="transform-button-name">{{ item.transform.name }}</span>
                                                 <small class="transform-preview" v-if="transformInput">
@@ -386,10 +400,10 @@
                                     <template v-for="item in getFilteredLastUsedDisplayItems()" :key="item.key">
                                         <div v-if="item.type === 'transform'" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(item.transform, $event)"
+                                                @click="selectOrApplyTransform(item.transform, $event)"
                                                 :class="'transform-button transform-category-' + getDisplayCategory(item.transform.name)"
-                                                :class="{ active: activeTransform === item.transform }"
-                                                :title="'Click to transform and copy: ' + item.transform.name"
+                                                :class="{ active: isTransformSelected(item.transform) }"
+                                                :title="'Select or apply: ' + item.transform.name"
                                             >
                                                 <span class="transform-button-name">{{ item.transform.name }}</span>
                                                 <small class="transform-preview" v-if="transformInput">
@@ -636,9 +650,9 @@
                                     <div class="transform-buttons">
                                         <div v-for="transform in getFilteredTransformsByCategory(category)" :key="getTransformKey(transform)" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(transform, $event)"
+                                                @click="selectOrApplyTransform(transform, $event)"
                                                 :class="'transform-button transform-category-' + category + ' randomizer-button'"
-                                                :class="{ active: activeTransform === transform }"
+                                                :class="{ active: isTransformSelected(transform) }"
                                                 title="Click to apply random transforms to each word!"
                                             >
                                                 <i class="fas fa-wand-magic-sparkles"></i>
@@ -706,10 +720,10 @@
                                     <div class="transform-buttons">
                                         <div v-for="transform in getFilteredTransformsByCategory(category)" :key="getTransformKey(transform)" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(transform, $event)"
+                                                @click="selectOrApplyTransform(transform, $event)"
                                                 :class="'transform-button transform-category-' + category"
-                                                :class="{ active: activeTransform === transform }"
-                                                :title="'Click to transform and copy: ' + transform.name"
+                                                :class="{ active: isTransformSelected(transform) }"
+                                                :title="'Select or apply: ' + transform.name"
                                             >
                                                 <span class="transform-button-name">{{ transform.name }}</span>
                                                 <small class="transform-preview" v-if="transformInput">

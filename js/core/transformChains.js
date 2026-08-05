@@ -278,6 +278,34 @@
         });
     }
 
+    function buildTranslateToEnglishPrompt(langName, langCode, text) {
+        return 'You are a professional ' + langName + ' (' + langCode + ') to English (en) translator. ' +
+            'Produce only the English translation, without any additional explanations or commentary. ' +
+            'Preserve punctuation and structure. Translate this ' + langName + ' text to English:\n\n' + text;
+    }
+
+    /** Undo a Translate stage: foreign language → English via AI. */
+    function runTranslateToEnglishNode(node, text, opts) {
+        if (!global.AIProvider || typeof global.AIProvider.chatCompletion !== 'function') {
+            return Promise.reject(new Error('Configure an AI provider in Settings.'));
+        }
+        opts = opts || {};
+        var model = node.model || opts.model ||
+            global.localStorage.getItem('translate-model') ||
+            global.localStorage.getItem('chain-decode-model') || '';
+        var callOpts = Object.assign({}, opts, { model: model });
+        var stagesApi = global.TransformRecipeStages;
+        var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+            ? stagesApi.resolveTranslateLanguage(node.lang)
+            : { name: String(node.lang || ''), code: String(node.lang || '') };
+        return global.AIProvider.chatCompletion([
+            { role: 'user', content: buildTranslateToEnglishPrompt(language.name, language.code, text) }
+        ], callOpts).then(function(data) {
+            var message = data && data.choices && data.choices[0] && data.choices[0].message;
+            return ((message && message.content) || '').trim();
+        });
+    }
+
     function clampNumber(value, fallback, min, max) {
         var number = Number(value);
         if (!isFinite(number)) number = fallback;
@@ -341,6 +369,34 @@
             });
         }, Promise.resolve(text)).then(function(value) {
             return applyCarrier(carrierNode, value);
+        });
+    }
+
+    /**
+     * Decode a staged recipe in reverse encode order:
+     * undo transform nodes mechanically, then Translate <lang> → English via AI.
+     * Carriers are not decoded here (caller should use full AI decode or extract text first).
+     */
+    function runStagedRecipeDecodeAsync(recipe, text, opts) {
+        if (!recipe || recipe.kind !== 'staged') {
+            return Promise.reject(new Error('Not a staged recipe.'));
+        }
+        if (recipe.stages && recipe.stages.carrier) {
+            return Promise.reject(new Error('Carrier recipes need AI decode or a text payload.'));
+        }
+        var nodes = getStagedNodes(recipe).slice().reverse();
+        return nodes.reduce(function(pending, node) {
+            return pending.then(function(acc) {
+                if (node && node.type === 'translate') {
+                    return runTranslateToEnglishNode(node, acc, opts);
+                }
+                if (node && typeof node.transform === 'string') {
+                    return reverseNode(node, acc);
+                }
+                return acc;
+            });
+        }, Promise.resolve(String(text || ''))).then(function(value) {
+            return { kind: 'text', value: String(value == null ? '' : value) };
         });
     }
 
@@ -942,6 +998,7 @@
         runStagedRecipeSync: runStagedRecipeSync,
         applyCarrier: applyCarrier,
         runStagedRecipeAsync: runStagedRecipeAsync,
+        runStagedRecipeDecodeAsync: runStagedRecipeDecodeAsync,
         reverseChainNodes: reverseChainNodes,
         runCycle: runCycle,
         resolveCycleChains: resolveCycleChains,

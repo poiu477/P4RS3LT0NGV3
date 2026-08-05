@@ -50,6 +50,8 @@ class TransformTool extends Tool {
                 : 'encode'),
             transformApplyGeneration: 0,
             activeTransform: null,
+            /** True after the selected transform has been applied at least once (enables live recompute while typing). */
+            transformSelectionApplied: false,
             transforms: transforms,
             legendCategories: legendCategories, // Always alphabetical for legend
             categories: sectionCategories, // Custom order for sections
@@ -904,6 +906,9 @@ class TransformTool extends Tool {
                 this.transformIoMode = next;
                 window.TransformApplyMode.saveMode(localStorage, next);
                 if (this.transformInput && this.activeTransform && this.activeTab === 'transforms') {
+                    if (next === 'decode') {
+                        this.showNotification('Decoding…', 'info', 'fas fa-spinner');
+                    }
                     this.applyTransform(this.activeTransform);
                 }
             },
@@ -1163,15 +1168,27 @@ class TransformTool extends Tool {
                             || !window.AIProvider.getConfiguredProviders().length) {
                             throw new Error('Configure an AI provider in Settings to decode this transform.');
                         }
-                        const recipe = window.TransformApplyMode.describeForAiDecode(transform, window.TransformChains);
-                        const decodeOrder = window.TransformApplyMode.describeDecodeOrderForAi
-                            ? window.TransformApplyMode.describeDecodeOrderForAi(transform, window.TransformChains)
-                            : '';
-                        const text = await window.TransformChains.aiDecode(recipe, input, {
-                            model: this.chainDecodeModel || localStorage.getItem('chain-decode-model') || '',
-                            decodeOrder: decodeOrder
-                        });
-                        result = { kind: 'text', value: text };
+                        // Prefer hybrid decode for staged recipes: undo transforms
+                        // mechanically (last→first), then AI-translate back to English.
+                        // Full-prompt AI decode often no-ops on circled/styled Unicode.
+                        if (stagedRecipe && !(stagedRecipe.stages && stagedRecipe.stages.carrier)
+                            && typeof window.TransformChains.runStagedRecipeDecodeAsync === 'function') {
+                            result = await window.TransformChains.runStagedRecipeDecodeAsync(
+                                stagedRecipe,
+                                input,
+                                opts
+                            );
+                        } else {
+                            const recipe = window.TransformApplyMode.describeForAiDecode(transform, window.TransformChains);
+                            const decodeOrder = window.TransformApplyMode.describeDecodeOrderForAi
+                                ? window.TransformApplyMode.describeDecodeOrderForAi(transform, window.TransformChains)
+                                : '';
+                            const text = await window.TransformChains.aiDecode(recipe, input, {
+                                model: this.chainDecodeModel || localStorage.getItem('chain-decode-model') || '',
+                                decodeOrder: decodeOrder
+                            });
+                            result = { kind: 'text', value: text };
+                        }
                     } else if (action === 'reverse') {
                         if (typeof transform.reverse !== 'function') {
                             throw new Error('No reverse function available.');
@@ -1227,6 +1244,37 @@ class TransformTool extends Tool {
                     return { applied: false, error: e };
                 }
             },
+            isTransformSelected: function(transform) {
+                if (!this.activeTransform || !transform) return false;
+                if (this.activeTransform.transformKey && transform.transformKey) {
+                    return this.activeTransform.transformKey === transform.transformKey;
+                }
+                return this.activeTransform.name === transform.name;
+            },
+            selectOrApplyTransform: async function(transform, event) {
+                event && event.preventDefault();
+                event && event.stopPropagation();
+                if (!transform) return;
+
+                if (this.isTransformSelected(transform)) {
+                    return this.applyTransform(transform, event);
+                }
+
+                this.activeTransform = transform;
+                this.transformSelectionApplied = false;
+                this.showNotification(
+                    transform.name + ' selected — click again or press Transform to apply',
+                    'info',
+                    'fas fa-hand-pointer'
+                );
+            },
+            applySelectedTransform: async function(event) {
+                if (!this.activeTransform) {
+                    this.showNotification('Select a method or recipe below first.', 'info', 'fas fa-hand-pointer');
+                    return;
+                }
+                return this.applyTransform(this.activeTransform, event);
+            },
             applyTransform: async function(transform, event) {
                 event && event.preventDefault();
                 event && event.stopPropagation();
@@ -1240,7 +1288,7 @@ class TransformTool extends Tool {
                 this.activeTransform = transform;
 
                 if (!this.transformInput) {
-                    this.showNotification('Enter text in the input box, then click the transform again.', 'info', 'fas fa-keyboard');
+                    this.showNotification('Enter text in the input box, then click Transform.', 'info', 'fas fa-keyboard');
                     document.querySelectorAll('.transform-button').forEach(button => {
                         button.classList.remove('active');
                     });
@@ -1258,6 +1306,8 @@ class TransformTool extends Tool {
                 if (!outcome.applied) {
                     return;
                 }
+
+                this.transformSelectionApplied = true;
 
                 if (transform.name === 'Random Mix') {
                     const transformInfo = window.transforms.randomizer.getLastTransformInfo();
@@ -1492,7 +1542,7 @@ class TransformTool extends Tool {
                 }
             },
             autoTransform: function() {
-                if (this.transformInput && this.activeTransform && this.activeTab === 'transforms') {
+                if (this.transformInput && this.activeTransform && this.transformSelectionApplied && this.activeTab === 'transforms') {
                     this.applyActiveTransformOutput({ preserveEmojis: true });
                 }
             },
@@ -1529,7 +1579,7 @@ class TransformTool extends Tool {
                         return t.transformKey === previousKey;
                     });
                     this.activeTransform = match || null;
-                    if (match && this.transformInput && this.activeTab === 'transforms') {
+                    if (match && this.transformInput && this.transformSelectionApplied && this.activeTab === 'transforms') {
                         this.applyActiveTransformOutput();
                     } else if (!match) {
                         ++this.transformApplyGeneration;
@@ -1549,7 +1599,7 @@ class TransformTool extends Tool {
                 if (typeof this.transformRefreshLexemeAnalysis === 'function') {
                     this.transformRefreshLexemeAnalysis();
                 }
-                if (this.activeTransform && this.activeTab === 'transforms') {
+                if (this.activeTransform && this.transformSelectionApplied && this.activeTab === 'transforms') {
                     this.applyActiveTransformOutput();
                 }
             },

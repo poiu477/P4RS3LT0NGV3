@@ -265,31 +265,54 @@ assert.strictEqual(
 assert.strictEqual(ctx.transforms[`chain_${carrierRecipeId}`].reverse, null);
 const carrierDescription = TC.describeChain(carrierRecipe);
 assert.match(carrierDescription, /QR/, 'description must mention the carrier stage');
-assert.match(carrierDescription, /Caesar/, 'description must still include the transform-backed stage');
 
-const translateCalls = [];
+// Hybrid decode: undo present/obfuscate mechanically (reverse order), then AI translate→English
+ctx.transforms.theban.func = (t) => '[' + t + ']';
+ctx.transforms.theban.reverse = (t) => String(t).replace(/^\[/, '').replace(/\]$/, '');
+var translateCalls = [];
 ctx.AIProvider = {
-    chatCompletion: (messages, opts) => {
-        translateCalls.push({ messages, opts });
+    chatCompletion: function(messages, callOpts) {
+        translateCalls.push({ messages: messages, callOpts: callOpts });
+        var user = messages && messages[0] && messages[0].content;
+        assert.ok(/English/i.test(user), 'decode translate prompt targets English');
+        assert.ok(/Latin/i.test(user) || /\bla\b/i.test(user), 'decode translate prompt names source language');
         return Promise.resolve({
-            choices: [{ message: { content: '[LA]' + messages[messages.length - 1].content.split('\n\n').pop() } }]
+            choices: [{ message: { content: 'Hello World' } }]
         });
     }
 };
+return TC.runStagedRecipeDecodeAsync(translateRecipe, '[Salve Mundi]').then(function(decoded) {
+    assert.strictEqual(decoded.kind, 'text');
+    assert.strictEqual(decoded.value, 'Hello World');
+    assert.strictEqual(translateCalls.length, 1, 'exactly one AI translate-to-English call');
+    var prompt = translateCalls[0].messages[0].content;
+    assert.ok(prompt.indexOf('Salve Mundi') !== -1, 'AI sees text after mechanical undo of Theban');
+    assert.match(carrierDescription, /Caesar/, 'description must still include the transform-backed stage');
 
-const asyncRecipe = {
-    kind: 'staged',
-    stages: {
-        normalize: null,
-        translate: { type: 'translate', lang: 'la', model: 'test::translate' },
-        obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
-        present: null,
-        conceal: null,
-        carrier: null
-    }
-};
+    translateCalls.length = 0;
+    ctx.AIProvider = {
+        chatCompletion: (messages, opts) => {
+            translateCalls.push({ messages, opts });
+            return Promise.resolve({
+                choices: [{ message: { content: '[LA]' + messages[messages.length - 1].content.split('\n\n').pop() } }]
+            });
+        }
+    };
 
-TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
+    const asyncRecipe = {
+        kind: 'staged',
+        stages: {
+            normalize: null,
+            translate: { type: 'translate', lang: 'la', model: 'test::translate' },
+            obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
+            present: null,
+            conceal: null,
+            carrier: null
+        }
+    };
+
+    return TC.runStagedRecipeAsync(asyncRecipe, 'Hello');
+}).then((result) => {
     assert.deepStrictEqual(
         JSON.parse(JSON.stringify(result)),
         { kind: 'text', value: '[OD]Khoor' },
