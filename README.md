@@ -267,6 +267,7 @@ Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider**
 - **Favorites & last used**: Pin transforms and recall recent picks.
 - **Per-transform options**: Gear icon where a transform exposes settings.
 - **Keyboard shortcut**: **T** (shown in the tab title).
+- **Encode / Decode** toggle above the input: every transform and saved recipe runs in that mode. Results show in the Output field under the input and are copied to the clipboard (Copy History). Irreversible methods use AI decode when Decode is selected.
 
 ### Recipes & Cycles (on the Transform tab)
 

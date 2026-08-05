@@ -104,6 +104,14 @@ Transform-backed stages run synchronously in rail order. A Translate node uses t
 - Mechanical reverse is available only when every relevant node supports it; otherwise the manager offers AI recipe decode through `aiDecode`.
 - UI: `templates/transforms.html`, with builder and apply/preview methods on `TransformTool`.
 
+### Encode / Decode apply mode
+
+- Mode helpers: `js/core/transformApplyMode.js` (`window.TransformApplyMode`); persisted in `localStorage` key `transform-encode-decode-mode` (default `encode`).
+- UI: segmented **Encode | Decode** switch above the input in `templates/transforms.html`; Output field sits directly under Input.
+- Click path: registered transforms and saved recipes/cycles share `TransformTool.applyTransform` → `applyActiveTransformOutput({ copyOnSuccess: true })`. `TransformApplyMode.resolveAction` picks `encode`, mechanical `reverse`, or `ai_decode` (irreversible decode → `TransformChains.aiDecode` with `describeForAiDecode`).
+- Destinations: text always in Output; image carriers (e.g. QR) preview in Output with underlying text when present; explicit apply/click also copies text to clipboard (Copy History). Live `@input` auto-transform updates Output only (no clipboard).
+- Manager **Apply** on recipe list is demoted; chains run like other transform tiles via the shared click path.
+
 ### Cycle modes
 
 - `word_safe` is the default, including for records saved before cycle modes existed. Validation rejects recipes that are unsafe per word, including Base64-like transforms and staged Translate or Carrier nodes, and registration keeps mechanical reverse only after its round-trip probe succeeds.
