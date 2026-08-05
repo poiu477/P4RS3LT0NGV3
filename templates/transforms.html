@@ -119,13 +119,13 @@
                             </button>
                             <div v-if="chainManageOpen" class="chain-manager-body">
                                 <div class="chain-manager-actions">
-                                    <button type="button" class="btn btn-secondary" @click="openRecipeBuilder(null)">
+                                    <button type="button" class="btn btn-secondary" @click.stop.prevent="openRecipeBuilder(null)">
                                         <i class="fas fa-plus"></i> New recipe
                                     </button>
-                                    <button type="button" class="btn btn-secondary chain-legacy-button" @click="setLegacyFreeformBuilder(true)">
+                                    <button type="button" class="btn btn-secondary chain-legacy-button" @click.stop.prevent="setLegacyFreeformBuilder(true)">
                                         <i class="fas fa-sliders"></i> Free-form (legacy)
                                     </button>
-                                    <button type="button" class="btn btn-secondary" @click="openCycleBuilder(null)" :disabled="!savedChains().length">
+                                    <button type="button" class="btn btn-secondary" @click.stop.prevent="openCycleBuilder(null)" :disabled="!savedChains().length">
                                         <i class="fas fa-plus"></i> New per-word cycle
                                     </button>
                                     <button type="button" class="btn btn-secondary" @click="chainExportAll">
@@ -838,7 +838,7 @@
 
                 <!-- Chain / cycle builder -->
                 <template v-if="chainBuilderOpen">
-                    <div class="transform-options-backdrop" @click.self="closeChainBuilder">
+                    <div class="transform-options-backdrop chain-builder-backdrop" @click.self="closeChainBuilder">
                     <div
                         class="transform-options-panel chain-builder-panel"
                         role="dialog"

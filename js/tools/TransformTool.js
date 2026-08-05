@@ -431,6 +431,8 @@ class TransformTool extends Tool {
                 this.stagedPickerQuery = '';
                 this.stagedOpenNodeOptions = null;
                 this.chainBuilderError = '';
+                // Ignore backdrop "ghost clicks" from the same tap that opened the modal.
+                this.chainBuilderOpenedAt = Date.now();
                 this.chainBuilderOpen = true;
             },
             applyRecipeTemplate: function(templateId) {
@@ -581,6 +583,7 @@ class TransformTool extends Tool {
                 this.chainNodePickerQuery = '';
                 this.chainOpenNodeOptionsIndex = null;
                 this.chainBuilderError = '';
+                this.chainBuilderOpenedAt = Date.now();
                 this.chainBuilderOpen = true;
             },
             setLegacyFreeformBuilder: function(enabled) {
@@ -671,6 +674,7 @@ class TransformTool extends Tool {
                 this.cycleDraftChainIds = existing ? existing.chainIds.slice() : [];
                 this.cycleDraftMode = existing && existing.mode === 'one_way' ? 'one_way' : 'word_safe';
                 this.chainBuilderError = '';
+                this.chainBuilderOpenedAt = Date.now();
                 this.chainBuilderOpen = true;
             },
             cycleAddChainRef: function(chainId) {
@@ -729,6 +733,8 @@ class TransformTool extends Tool {
             },
 
             closeChainBuilder: function() {
+                // Same-tap backdrop closes look like "the button does nothing".
+                if (Date.now() - (this.chainBuilderOpenedAt || 0) < 400) return;
                 this.chainBuilderOpen = false;
                 this.chainBuilderError = '';
             },
