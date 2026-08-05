@@ -383,7 +383,7 @@ class TransformTool extends Tool {
                     stages: {
                         normalize: null,
                         translate: null,
-                        obfuscate: [],
+                        obfuscate: null,
                         present: null,
                         conceal: null,
                         carrier: null
@@ -555,7 +555,21 @@ class TransformTool extends Tool {
                 }
                 this.chainBuilderOpen = false;
                 this.refreshChainsTransforms();
-                this.showNotification('Recipe saved — find it under chains', 'success', 'fas fa-link');
+                this.showNotification('Recipe saved — use Apply on the list (with text in the input)', 'success', 'fas fa-link');
+            },
+
+            applySavedChain: function(chain) {
+                const entry = this.chainRegisteredEntry(chain);
+                if (!entry) {
+                    this.refreshChainsTransforms();
+                    const again = this.chainRegisteredEntry(chain);
+                    if (!again) {
+                        this.showNotification('Recipe is not available yet. Try refreshing the page.', 'error', 'fas fa-link');
+                        return;
+                    }
+                    return this.applyTransform(again);
+                }
+                return this.applyTransform(entry);
             },
 
             // -- LEGACY_FREEFORM_BUILDER: remove with free-form chain support --
@@ -1168,52 +1182,64 @@ class TransformTool extends Tool {
                 if (transform && transform.name === 'Random Mix') {
                     this.triggerRandomizerChaos();
                 }
-                
-                if (this.transformInput) {
-                    this.activeTransform = transform;
-                    
-                    // Track last used
-                    this.saveLastUsedTransform(transform.name);
-                    
-                    const outcome = await this.applyActiveTransformOutput();
-                    if (!outcome.applied) {
-                        return;
-                    }
 
-                    if (transform.name === 'Random Mix') {
-                        const transformInfo = window.transforms.randomizer.getLastTransformInfo();
-                        if (transformInfo.length > 0) {
-                            const transformsList = transformInfo.map(t => t.transformName).join(', ');
-                            this.showNotification(`Mixed with: ${transformsList}`, 'success', 'fas fa-random');
-                        }
-                    }
-                    
-                    if (this.transformOutputKind === 'text') {
-                        this.isTransformCopy = true;
-                        this.forceCopyToClipboard(this.transformOutput);
-                    }
-                    
-                    if (transform.name !== 'Random Mix') {
-                        const message = this.transformOutputKind === 'image'
-                            ? `${transform.name} image preview ready!`
-                            : `${transform.name} applied and copied!`;
-                        this.showNotification(message, 'success', 'fas fa-check');
-                    }
-                    
+                if (!transform) return;
+
+                this.activeTransform = transform;
+
+                if (!this.transformInput) {
+                    this.showNotification('Enter text in the input box, then Apply the recipe again.', 'info', 'fas fa-keyboard');
                     document.querySelectorAll('.transform-button').forEach(button => {
                         button.classList.remove('active');
                     });
-                    
                     const inputBox = document.querySelector('#transform-input');
                     if (inputBox) {
                         this.focusWithoutScroll(inputBox);
-                        const len = inputBox.value.length;
-                        try { inputBox.setSelectionRange(len, len); } catch (_) {}
                     }
-                    
-                    this.isTransformCopy = false;
-                    this.ignoreKeyboardEvents = false;
+                    return;
                 }
+
+                // Track last used
+                this.saveLastUsedTransform(transform.name);
+                
+                const outcome = await this.applyActiveTransformOutput();
+                if (!outcome.applied) {
+                    return;
+                }
+
+                if (transform.name === 'Random Mix') {
+                    const transformInfo = window.transforms.randomizer.getLastTransformInfo();
+                    if (transformInfo.length > 0) {
+                        const transformsList = transformInfo.map(t => t.transformName).join(', ');
+                        this.showNotification(`Mixed with: ${transformsList}`, 'success', 'fas fa-random');
+                    }
+                }
+                
+                if (this.transformOutputKind === 'text') {
+                    this.isTransformCopy = true;
+                    this.forceCopyToClipboard(this.transformOutput);
+                }
+                
+                if (transform.name !== 'Random Mix') {
+                    const message = this.transformOutputKind === 'image'
+                        ? `${transform.name} image preview ready!`
+                        : `${transform.name} applied and copied!`;
+                    this.showNotification(message, 'success', 'fas fa-check');
+                }
+                
+                document.querySelectorAll('.transform-button').forEach(button => {
+                    button.classList.remove('active');
+                });
+                
+                const inputBox = document.querySelector('#transform-input');
+                if (inputBox) {
+                    this.focusWithoutScroll(inputBox);
+                    const len = inputBox.value.length;
+                    try { inputBox.setSelectionRange(len, len); } catch (_) {}
+                }
+                
+                this.isTransformCopy = false;
+                this.ignoreKeyboardEvents = false;
             },
             saveLastUsedTransform: function(transformName) {
                 try {

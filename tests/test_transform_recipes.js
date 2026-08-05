@@ -47,16 +47,39 @@ assert.strictEqual(S.validateStagedRecipe({
     name: 'x',
     kind: 'staged',
     stages: { obfuscate: [], present: null, translate: null, normalize: null, conceal: null, carrier: null }
-}, ctx.transforms), 'Add at least one obfuscate step.');
+}, ctx.transforms), 'Add at least two steps (any stages).');
 
 assert.strictEqual(S.validateStagedRecipe({
+    name: 'Only one',
+    kind: 'staged',
+    stages: {
+        obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
+        present: null, translate: null, normalize: null, conceal: null, carrier: null
+    }
+}, ctx.transforms), 'Add at least two steps (any stages).');
+
+assert.strictEqual(S.validateStagedRecipe({
+    name: 'Translate + symbol',
+    kind: 'staged',
+    stages: {
+        obfuscate: null,
+        present: [{ transform: 'theban', options: {} }],
+        translate: { type: 'translate', lang: 'la', model: '' },
+        normalize: null, conceal: null, carrier: null
+    }
+}, ctx.transforms), null);
+
+assert.ok(String(S.validateStagedRecipe({
     name: 'x',
     kind: 'staged',
     stages: {
-        obfuscate: [{ transform: 'theban', options: {} }],
+        obfuscate: [
+            { transform: 'theban', options: {} },
+            { transform: 'caesar', options: { shift: 3 } }
+        ],
         present: null, translate: null, normalize: null, conceal: null, carrier: null
     }
-}, ctx.transforms) != null, true, 'theban not allowed in obfuscate');
+}, ctx.transforms)).indexOf('not allowed') !== -1, 'theban not allowed in obfuscate');
 
 assert.strictEqual(S.validateStagedRecipe({
     name: 'Good',
@@ -118,7 +141,10 @@ assert.strictEqual(TC.saveRecipe({
     name: 'Bad',
     kind: 'staged',
     stages: {
-        obfuscate: [{ transform: 'theban', options: {} }],
+        obfuscate: [
+            { transform: 'theban', options: {} },
+            { transform: 'caesar', options: { shift: 3 } }
+        ],
         present: null,
         translate: null,
         normalize: null,

@@ -73,23 +73,30 @@
         return cats.indexOf(cat) !== -1;
     }
 
+    function countStagedSteps(stages) {
+        if (!isRecord(stages)) return 0;
+        var count = 0;
+        var multi = ['normalize', 'obfuscate', 'present', 'conceal'];
+        for (var i = 0; i < multi.length; i++) {
+            var nodes = stages[multi[i]];
+            if (Array.isArray(nodes)) count += nodes.length;
+        }
+        if (stages.translate) count += 1;
+        if (stages.carrier) count += 1;
+        return count;
+    }
+
     function validateStagedRecipe(recipe, transformsMap) {
         if (!isRecord(recipe) || typeof recipe.name !== 'string' || !recipe.name.trim()) {
             return 'Name is required.';
         }
         var stages = recipe.stages;
         if (!isRecord(stages)) return 'Invalid stages.';
-        var ob = stages.obfuscate;
-        if (!Array.isArray(ob) || ob.length === 0) {
-            return 'Add at least one obfuscate step.';
+        if (countStagedSteps(stages) < 2) {
+            return 'Add at least two steps (any stages).';
         }
+        var multi = ['normalize', 'obfuscate', 'present', 'conceal'];
         var i;
-        for (i = 0; i < ob.length; i++) {
-            if (!isTransformAllowedInStage('obfuscate', ob[i] && ob[i].transform, transformsMap)) {
-                return 'Transform not allowed in Obfuscate: ' + ((ob[i] && ob[i].transform) || '?');
-            }
-        }
-        var multi = ['normalize', 'present', 'conceal'];
         for (i = 0; i < multi.length; i++) {
             var sid = multi[i];
             var nodes = stages[sid];
@@ -154,7 +161,7 @@
             stages: {
                 normalize: null,
                 translate: { type: 'translate', lang: 'la', model: '' },
-                obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
+                obfuscate: null,
                 present: [{ transform: 'theban', options: {} }],
                 conceal: null,
                 carrier: null

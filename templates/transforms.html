@@ -146,6 +146,7 @@
 
                                 <div v-if="savedChains().length" class="chain-list">
                                     <h5>Recipes &amp; free-form chains</h5>
+                                    <small class="chain-manager-hint">Enter text above, then hit Apply on a recipe to run it into the output.</small>
                                     <div v-for="chain in savedChains()" :key="chain.id" class="chain-list-item">
                                         <div class="chain-list-item-main">
                                             <strong>{{ chain.name }}</strong>
@@ -157,6 +158,9 @@
                                             <small>{{ chainRegisteredEntry(chain) ? chainRegisteredEntry(chain).description : '' }}</small>
                                         </div>
                                         <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn chain-action-btn-primary" @click="applySavedChain(chain)" title="Apply recipe">
+                                                <i class="fas fa-play"></i> Apply
+                                            </button>
                                             <button type="button" class="chain-action-btn" @click="chainCopyRecipe(chain, 'chain')" title="Copy recipe">
                                                 <i class="fas fa-copy"></i>
                                             </button>
@@ -891,7 +895,7 @@
                                             <span class="chain-node-index">{{ stageIndex + 1 }}</span>
                                             <div>
                                                 <strong>{{ recipeStageLabel(stageId) }}</strong>
-                                                <small>{{ stageId === 'obfuscate' ? 'At least one step' : 'Optional' }}</small>
+                                                <small>Optional</small>
                                             </div>
                                         </header>
 
@@ -1204,6 +1208,9 @@
                             </template>
 
                             <p v-if="chainBuilderError" class="chain-decode-error">{{ chainBuilderError }}</p>
+                            <p v-else-if="recipeBuilderMode === 'staged' && chainBuilderKind !== 'cycle'" class="chain-manager-hint">
+                                Recipes need at least two steps — any mix of stages is fine.
+                            </p>
                         </div>
 
                         <div class="transform-options-panel-actions">
