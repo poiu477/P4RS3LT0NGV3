@@ -232,7 +232,7 @@ TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
     }, 'secret').then((qrResult) => {
         assert.deepStrictEqual(
             JSON.parse(JSON.stringify(qrResult)),
-            { kind: 'image', value: 'data:image/png;base64,mocked' }
+            { kind: 'image', value: 'data:image/png;base64,mocked', text: 'secret' }
         );
         assert.deepStrictEqual(
             JSON.parse(JSON.stringify(qrCalls)),
@@ -282,7 +282,7 @@ TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
 }).then(({ result, qrCalls }) => {
     assert.deepStrictEqual(
         JSON.parse(JSON.stringify(result)),
-        { kind: 'image', value: 'data:image/png;base64,mocked' },
+        { kind: 'image', value: 'data:image/png;base64,mocked', text: 'Khoor' },
         'runner applies the carrier after text transforms'
     );
     assert.deepStrictEqual(
@@ -293,6 +293,32 @@ TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
         },
         'QR receives transformed text and CodesTool defaults'
     );
+    ctx.QRCode = {
+        toDataURL: function(text) {
+            return Promise.resolve('data:image/png;base64,STUB');
+        }
+    };
+    const recipeWithQr = {
+        name: 'QR Demo',
+        kind: 'staged',
+        stages: {
+            normalize: null,
+            translate: null,
+            obfuscate: [{ transform: 'base64', options: {} }],
+            present: null,
+            conceal: null,
+            carrier: { type: 'qr', options: {} }
+        }
+    };
+    TC.saveRecipe(recipeWithQr);
+    return TC.runStagedRecipeAsync(
+        TC.loadChains().filter(c => c.name === 'QR Demo')[0] || recipeWithQr,
+        'hi'
+    );
+}).then(function(result) {
+    assert.strictEqual(result.kind, 'image');
+    assert.ok(result.value.indexOf('data:image') === 0);
+    assert.strictEqual(result.text, 'aGk=');
     console.log('test_transform_recipes: OK');
 }).catch((err) => {
     console.error(err);

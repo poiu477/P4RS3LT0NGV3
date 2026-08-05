@@ -304,7 +304,7 @@
                 margin: clampNumber(marginValue, 2, 0, 20),
                 errorCorrectionLevel: options.errorCorrectionLevel || options.ecl || 'M'
             }).then(function(dataUrl) {
-                return { kind: 'image', value: dataUrl };
+                return { kind: 'image', value: dataUrl, text: String(text) };
             });
         }
         if (carrierNode.type === 'emoji_stego') {
