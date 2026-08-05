@@ -1,11 +1,25 @@
 <div v-if="activeTab === 'transforms'" class="tab-content">
                 <div class="transform-layout">
                     <div class="input-section">
+                        <div class="transform-io-mode" role="group" aria-label="Encode or decode">
+                            <button
+                                type="button"
+                                class="transform-io-mode-btn"
+                                :class="{ active: transformIoMode === 'encode' }"
+                                @click="setTransformIoMode('encode')"
+                            >Encode</button>
+                            <button
+                                type="button"
+                                class="transform-io-mode-btn"
+                                :class="{ active: transformIoMode === 'decode' }"
+                                @click="setTransformIoMode('decode')"
+                            >Decode</button>
+                        </div>
                         <textarea 
                             v-if="transformInputControlKind() === 'textarea'"
                             id="transform-input" 
                             v-model="transformInput" 
-                            placeholder="Enter text to transform..."
+                            :placeholder="transformIoMode === 'decode' ? 'Enter text to decode...' : 'Enter text to transform...'"
                             @input="autoTransform"
                         ></textarea>
                         <input
@@ -13,12 +27,43 @@
                             id="transform-input"
                             type="text"
                             v-model="transformInput"
-                            placeholder="Enter text to transform..."
+                            :placeholder="transformIoMode === 'decode' ? 'Enter text to decode...' : 'Enter text to transform...'"
                             @input="autoTransform"
                             autocomplete="off"
                             autocorrect="off"
                             spellcheck="false"
                         />
+                    </div>
+
+                    <div class="output-section" v-if="transformOutput">
+                        <div class="output-heading">
+                            <h4>
+                                <i class="fas fa-check-circle"></i>
+                                {{ transformIoMode === 'decode' ? 'Decoded' : 'Transformed' }} Message
+                                <small v-if="activeTransform">({{ activeTransform.name }})</small>
+                            </h4>
+                        </div>
+                        <div class="output-container" :class="{ 'signwriting-output': activeTransform && activeTransform.category === 'signwriting' }">
+                            <img
+                                v-if="transformOutputKind === 'image'"
+                                :src="transformOutput"
+                                :alt="activeTransform ? activeTransform.name + ' image output' : 'Transformed image output'"
+                                class="transform-image-output"
+                            >
+                            <textarea
+                                v-else
+                                readonly
+                                v-model="transformOutput"
+                                aria-label="Transform output text"
+                            ></textarea>
+                            <button v-if="transformOutputKind !== 'image'" class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                        <div class="output-instructions">
+                            <small v-if="transformOutputKind === 'image'"><i class="fas fa-info-circle"></i> Save or share this generated image.</small>
+                            <small v-else><i class="fas fa-info-circle"></i> Copy this text and share it. Use Decode mode to reverse transformations.</small>
+                        </div>
                     </div>
 
                     <div v-if="transformGetLexemeAnalysis().totalFindings" class="lexeme-analysis-card transform-lexeme-card">
@@ -715,36 +760,6 @@
                         </div>
                     </div>
 
-                    <div class="output-section" v-if="transformOutput">
-                        <div class="output-heading">
-                            <h4>
-                                <i class="fas fa-check-circle"></i> 
-                                Transformed Message
-                                <small v-if="activeTransform">({{ activeTransform.name }})</small>
-                            </h4>
-                        </div>
-                        <div class="output-container" :class="{ 'signwriting-output': activeTransform && activeTransform.category === 'signwriting' }">
-                            <img
-                                v-if="transformOutputKind === 'image'"
-                                :src="transformOutput"
-                                :alt="activeTransform ? activeTransform.name + ' image output' : 'Transformed image output'"
-                                class="transform-image-output"
-                            >
-                            <textarea 
-                                v-else
-                                readonly 
-                                v-model="transformOutput"
-                                aria-label="Transformed text output"
-                            ></textarea>
-                            <button v-if="transformOutputKind !== 'image'" class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                        </div>
-                        <div class="output-instructions">
-                            <small v-if="transformOutputKind === 'image'"><i class="fas fa-info-circle"></i> Save or share this generated image.</small>
-                            <small v-else><i class="fas fa-info-circle"></i> Copy this text and share it. Use the Decoder tab to reverse transformations.</small>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Native <template> keeps children out of the layout until Vue runs (no modal flash on load). -->

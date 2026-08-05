@@ -44,6 +44,9 @@ class TransformTool extends Tool {
             transformLexemeAnalysis: { totalFindings: 0, findings: [], summary: 'No Latin-root wording findings.' },
             transformOutput: '',
             transformOutputKind: 'text',
+            transformIoMode: (window.TransformApplyMode
+                ? window.TransformApplyMode.loadMode(localStorage)
+                : 'encode'),
             transformApplyGeneration: 0,
             activeTransform: null,
             transforms: transforms,
@@ -895,6 +898,16 @@ class TransformTool extends Tool {
                     return 'textarea';
                 }
                 return 'text';
+            },
+            setTransformIoMode: function(mode) {
+                if (!window.TransformApplyMode) return;
+                const next = window.TransformApplyMode.normalizeMode(mode);
+                if (next === this.transformIoMode) return;
+                this.transformIoMode = next;
+                window.TransformApplyMode.saveMode(localStorage, next);
+                if (this.transformInput && this.activeTransform && this.activeTab === 'transforms') {
+                    this.applyTransform(this.activeTransform);
+                }
             },
             transformRefreshLexemeAnalysis: function() {
                 if (typeof window === 'undefined' || !window.LexemeAnalysis || typeof window.LexemeAnalysis.analyze !== 'function') {
