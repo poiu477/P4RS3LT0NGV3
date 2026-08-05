@@ -129,6 +129,11 @@ class TransformTool extends Tool {
                 transformKey: key,
                 customSpellingId: transform.customSpellingId || null,
                 chainId: transform.chainId || null,
+                isChain: !!transform.isChain,
+                isCycle: !!transform.isCycle,
+                cycleId: transform.cycleId || null,
+                description: transform.description || '',
+                canDecode: transform.canDecode !== false,
                 name: transform.name,
                 func: transform.func.bind(transform),
                 preview: transform.preview ? transform.preview.bind(transform) : function() { return '[preview]'; },
@@ -1121,6 +1126,11 @@ class TransformTool extends Tool {
                 const input = this.transformInput;
                 const preserveEmojis = !!(options && options.preserveEmojis);
                 const copyOnSuccess = !!(options && options.copyOnSuccess);
+                // AI decode bills a live API call, so it must only run for an explicit
+                // user gesture (click, or mode-flip re-apply via applyTransform) — never
+                // from @input typing, the transformInput watcher, options save, or a tab
+                // refresh, all of which call this method with neither flag set.
+                const allowAiDecode = !!(options && (options.allowAiDecode || options.copyOnSuccess));
 
                 if (!transform || !input || this.activeTab !== 'transforms') {
                     this.transformOutputKind = 'text';
@@ -1134,6 +1144,10 @@ class TransformTool extends Tool {
                 const action = window.TransformApplyMode
                     ? window.TransformApplyMode.resolveAction(transform, this.transformIoMode)
                     : 'encode';
+
+                if (action === 'ai_decode' && !allowAiDecode) {
+                    return { applied: false };
+                }
 
                 try {
                     let result = { kind: 'text', value: '' };
@@ -1230,7 +1244,7 @@ class TransformTool extends Tool {
                 // Track last used
                 this.saveLastUsedTransform(transform.name);
                 
-                const outcome = await this.applyActiveTransformOutput({ copyOnSuccess: true });
+                const outcome = await this.applyActiveTransformOutput({ copyOnSuccess: true, allowAiDecode: true });
                 if (!outcome.applied) {
                     return;
                 }

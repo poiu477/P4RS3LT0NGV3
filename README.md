@@ -278,7 +278,7 @@ Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider**
 - **Free-form (legacy)** — the original unrestricted whole-input chain builder remains available as an escape hatch and existing `transform-chains-v1` saves continue to load.
 - **Cycle** — rotates saved recipes across words (word 1 → recipe A, word 2 → recipe B, wrap). The default **word-safe** mode rejects recipes such as Base64, Translate, or Carrier pipelines that cannot safely operate and reverse one word at a time. Enable **one-way** to allow them; that cycle is not mechanically decodable and is marked for AI decode.
 - Saved recipes and cycles appear under the **chains** category like ordinary transforms (search, favorites, click-to-apply). Nested recipes/cycles are not allowed.
-- If a recipe cannot mechanically reverse, use **AI decode** in the manager (uses your configured AI providers).
+- If a recipe cannot mechanically reverse, click it with **Decode** selected to run AI decode inline (uses your configured AI providers). The manager's AI decode panel is a secondary tool for testing a recipe/cycle without leaving the builder.
 - Export/import JSON from the manager; copy the human-readable recipe for sharing.
 
 > **Future B:** Opaque-token cycles—preserving word boundaries by wrapping arbitrary recipe output in tokens—are a possible future design, not part of the current cycle modes.

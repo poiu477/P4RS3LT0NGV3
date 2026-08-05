@@ -363,8 +363,22 @@
         }, text);
     }
 
+    /**
+     * A staged recipe with a Translate or Carrier stage is not mechanically
+     * reversible: translation is lossy/AI-driven and carriers (QR, emoji
+     * steganography) change the medium of the output, not just its text.
+     * These stages have no `transform` key so `getRunnableChainNodes` can't
+     * see them — check the full staged node list explicitly.
+     */
+    function stagedChainHasOneWayStage(chain) {
+        if (!chain || chain.kind !== 'staged') return false;
+        var stages = chain.stages || {};
+        return !!(stages.translate || stages.carrier);
+    }
+
     /** A chain round-trips only if every one of its nodes does. */
     function chainIsReversible(chain) {
+        if (stagedChainHasOneWayStage(chain)) return false;
         var nodes = getRunnableChainNodes(chain);
         if (!nodes.length) return false;
         return nodes.every(function(node) {
@@ -453,8 +467,38 @@
         return label + ' ' + serializeNodeOptions(node && node.options);
     }
 
+    /** Describe a single flattened staged node, including non-transform stages. */
+    function describeStagedNode(node) {
+        if (node && typeof node.transform === 'string') {
+            return describeNode(node);
+        }
+        if (node && node.type === 'translate') {
+            var stagesApi = global.TransformRecipeStages;
+            var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+                ? stagesApi.resolveTranslateLanguage(node.lang)
+                : { name: String(node.lang || ''), code: String(node.lang || '') };
+            return 'Translate to ' + (language.name || node.lang || '?') + ' [translate]';
+        }
+        if (node && node.type === 'qr') {
+            return 'QR code carrier [qr]';
+        }
+        if (node && node.type === 'emoji_stego') {
+            return 'Emoji steganography carrier [emoji_stego]';
+        }
+        return (node && node.type) || '?';
+    }
+
+    /**
+     * Human-readable, ordered description of every step a chain/recipe runs,
+     * used both as the registered transform's tooltip and as the AI decode
+     * hint. For staged recipes this must walk the full flattened node list
+     * (`getStagedNodes`), not just the transform-backed subset, or Translate
+     * and Carrier stages silently vanish from the description.
+     */
     function describeChain(chain) {
-        var names = getRunnableChainNodes(chain).map(describeNode);
+        var nodes = (chain && chain.kind === 'staged') ? getStagedNodes(chain) : getRunnableChainNodes(chain);
+        var describe = (chain && chain.kind === 'staged') ? describeStagedNode : describeNode;
+        var names = nodes.map(describe);
         return names.join(' → ') || 'empty chain';
     }
 

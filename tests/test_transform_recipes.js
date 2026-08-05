@@ -160,7 +160,9 @@ ctx.transforms.caesar.func = (t, o) => {
         return String.fromCharCode(((ch.charCodeAt(0) - base + shift) % 26) + base);
     });
 };
+ctx.transforms.caesar.reverse = (t, o) => ctx.transforms.caesar.func(t, { shift: -((o && o.shift) || 3) });
 ctx.transforms.base64.func = (t) => Buffer.from(t, 'utf8').toString('base64');
+ctx.transforms.base64.reverse = (t) => Buffer.from(t, 'base64').toString('utf8');
 
 const syncId = TC.saveRecipe({
     name: 'Caesar Base64',
@@ -183,6 +185,68 @@ const caesarOut = ctx.transforms.caesar.func(syncInput, { shift: 3 });
 const syncExpected = ctx.transforms.base64.func(caesarOut);
 assert.strictEqual(TC.runStagedRecipeSync(syncRecipe, syncInput), syncExpected);
 assert.strictEqual(ctx.transforms[`chain_${syncId}`].func(syncInput), syncExpected);
+
+// chainIsReversible / describeChain must account for Translate and Carrier
+// stages (Important finding): these have no `transform` key, so a naive
+// transform-only check wrongly reports mechanical reversibility and a
+// naive transform-only description silently drops them from the AI hint.
+assert.strictEqual(TC.chainIsReversible(syncRecipe), true, 'a plain cipher+encoding recipe is still reversible');
+
+const translateRecipeId = TC.saveRecipe({
+    name: 'Translate Then Theban',
+    kind: 'staged',
+    stages: {
+        normalize: null,
+        translate: { type: 'translate', lang: 'la', model: '' },
+        obfuscate: null,
+        present: [{ transform: 'theban', options: {} }],
+        conceal: null,
+        carrier: null
+    }
+});
+const translateRecipe = TC.loadChains().filter(c => c.id === translateRecipeId)[0];
+assert.strictEqual(
+    TC.chainIsReversible(translateRecipe),
+    false,
+    'a recipe with a translate stage must not register as mechanically reversible'
+);
+assert.strictEqual(
+    ctx.transforms[`chain_${translateRecipeId}`].canDecode,
+    false,
+    'the registered transform must inherit the non-reversible verdict'
+);
+assert.strictEqual(
+    ctx.transforms[`chain_${translateRecipeId}`].reverse,
+    null,
+    'no reverse function should be exposed for a one-way recipe'
+);
+const translateDescription = TC.describeChain(translateRecipe);
+assert.match(translateDescription, /Translate/, 'description must mention the translate stage');
+assert.match(translateDescription, /Latin/i, 'description must name the target language');
+assert.match(translateDescription, /Theban/, 'description must still include the transform-backed stage');
+
+const carrierRecipeId = TC.saveRecipe({
+    name: 'Caesar Then QR',
+    kind: 'staged',
+    stages: {
+        normalize: null,
+        translate: null,
+        obfuscate: [{ transform: 'caesar', options: { shift: 3 } }],
+        present: null,
+        conceal: null,
+        carrier: { type: 'qr', options: {} }
+    }
+});
+const carrierRecipe = TC.loadChains().filter(c => c.id === carrierRecipeId)[0];
+assert.strictEqual(
+    TC.chainIsReversible(carrierRecipe),
+    false,
+    'a recipe ending in a QR carrier must not register as mechanically reversible'
+);
+assert.strictEqual(ctx.transforms[`chain_${carrierRecipeId}`].reverse, null);
+const carrierDescription = TC.describeChain(carrierRecipe);
+assert.match(carrierDescription, /QR/, 'description must mention the carrier stage');
+assert.match(carrierDescription, /Caesar/, 'description must still include the transform-backed stage');
 
 const translateCalls = [];
 ctx.AIProvider = {
