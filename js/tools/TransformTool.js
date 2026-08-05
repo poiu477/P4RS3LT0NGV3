@@ -43,6 +43,7 @@ class TransformTool extends Tool {
             transformInput: 'Hello World',
             transformLexemeAnalysis: { totalFindings: 0, findings: [], summary: 'No Latin-root wording findings.' },
             transformOutput: '',
+            transformOutputKind: 'text',
             activeTransform: null,
             transforms: transforms,
             legendCategories: legendCategories, // Always alphabetical for legend
@@ -122,6 +123,7 @@ class TransformTool extends Tool {
             .map(([key, transform]) => ({
                 transformKey: key,
                 customSpellingId: transform.customSpellingId || null,
+                chainId: transform.chainId || null,
                 name: transform.name,
                 func: transform.func.bind(transform),
                 preview: transform.preview ? transform.preview.bind(transform) : function() { return '[preview]'; },
@@ -1081,7 +1083,19 @@ class TransformTool extends Tool {
             isSpecialCategory: function(category) {
                 return category === 'randomizer';
             },
-            applyTransform: function(transform, event) {
+            stagedRecipeForTransform: function(transform) {
+                if (!transform || !transform.chainId || !window.TransformChains) {
+                    return null;
+                }
+                return window.TransformChains.loadRecipes().find(function(recipe) {
+                    return recipe.id === transform.chainId && recipe.kind === 'staged';
+                }) || null;
+            },
+            stagedRecipeNeedsAsync: function(recipe) {
+                const stages = recipe && recipe.stages;
+                return !!(stages && (stages.translate || stages.carrier));
+            },
+            applyTransform: async function(transform, event) {
                 event && event.preventDefault();
                 event && event.stopPropagation();
                 
@@ -1096,6 +1110,7 @@ class TransformTool extends Tool {
                     this.saveLastUsedTransform(transform.name);
                     
                     if (transform.name === 'Random Mix') {
+                        this.transformOutputKind = 'text';
                         this.transformOutput = window.transforms.randomizer.func(this.transformInput);
                         const transformInfo = window.transforms.randomizer.getLastTransformInfo();
                         if (transformInfo.length > 0) {
@@ -1104,14 +1119,42 @@ class TransformTool extends Tool {
                         }
                     } else {
                         const opts = this.getMergedOptionsForTransform(transform.name);
-                        this.transformOutput = transform.func(this.transformInput, opts);
+                        const stagedRecipe = this.stagedRecipeForTransform(transform);
+                        if (this.stagedRecipeNeedsAsync(stagedRecipe)) {
+                            try {
+                                const result = await window.TransformChains.runStagedRecipeAsync(
+                                    stagedRecipe,
+                                    this.transformInput,
+                                    opts
+                                );
+                                this.transformOutputKind = result && result.kind === 'image' ? 'image' : 'text';
+                                this.transformOutput = result && result.value != null ? String(result.value) : '';
+                            } catch (e) {
+                                this.transformOutputKind = 'text';
+                                this.transformOutput = '';
+                                this.showNotification(
+                                    `${transform.name} failed: ${e.message || 'Could not apply recipe.'}`,
+                                    'error',
+                                    'fas fa-exclamation-triangle'
+                                );
+                                return;
+                            }
+                        } else {
+                            this.transformOutputKind = 'text';
+                            this.transformOutput = transform.func(this.transformInput, opts);
+                        }
                     }
                     
-                    this.isTransformCopy = true;
-                    this.forceCopyToClipboard(this.transformOutput);
+                    if (this.transformOutputKind === 'text') {
+                        this.isTransformCopy = true;
+                        this.forceCopyToClipboard(this.transformOutput);
+                    }
                     
                     if (transform.name !== 'Random Mix') {
-                        this.showNotification(`${transform.name} applied and copied!`, 'success', 'fas fa-check');
+                        const message = this.transformOutputKind === 'image'
+                            ? `${transform.name} image preview ready!`
+                            : `${transform.name} applied and copied!`;
+                        this.showNotification(message, 'success', 'fas fa-check');
                     }
                     
                     document.querySelectorAll('.transform-button').forEach(button => {

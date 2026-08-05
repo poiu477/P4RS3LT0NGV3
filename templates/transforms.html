@@ -720,17 +720,25 @@
                             </h4>
                         </div>
                         <div class="output-container" :class="{ 'signwriting-output': activeTransform && activeTransform.category === 'signwriting' }">
+                            <img
+                                v-if="transformOutputKind === 'image'"
+                                :src="transformOutput"
+                                :alt="activeTransform ? activeTransform.name + ' image output' : 'Transformed image output'"
+                                class="transform-image-output"
+                            >
                             <textarea 
+                                v-else
                                 readonly 
                                 v-model="transformOutput"
                                 aria-label="Transformed text output"
                             ></textarea>
-                            <button class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
+                            <button v-if="transformOutputKind !== 'image'" class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
                                 <i class="fas fa-copy"></i>
                             </button>
                         </div>
                         <div class="output-instructions">
-                            <small><i class="fas fa-info-circle"></i> Copy this text and share it. Use the Decoder tab to reverse transformations.</small>
+                            <small v-if="transformOutputKind === 'image'"><i class="fas fa-info-circle"></i> Save or share this generated image.</small>
+                            <small v-else><i class="fas fa-info-circle"></i> Copy this text and share it. Use the Decoder tab to reverse transformations.</small>
                         </div>
                     </div>
                 </div>
