@@ -5060,6 +5060,13 @@ body.transform-options-modal-open {
     position: relative;
 }
 
+.transform-image-output {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+}
+
 .copy-button {
     position: absolute;
     top: 8px;

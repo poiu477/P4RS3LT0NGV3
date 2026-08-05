@@ -44,6 +44,7 @@ class TransformTool extends Tool {
             transformLexemeAnalysis: { totalFindings: 0, findings: [], summary: 'No Latin-root wording findings.' },
             transformOutput: '',
             transformOutputKind: 'text',
+            transformApplyGeneration: 0,
             activeTransform: null,
             transforms: transforms,
             legendCategories: legendCategories, // Always alphabetical for legend
@@ -971,8 +972,7 @@ class TransformTool extends Tool {
                 this.showNotification('Options saved', 'success', 'fas fa-gear');
                 this.closeTransformOptions();
                 if (this.activeTransform && this.activeTransform.name === name && this.transformInput) {
-                    const opts = this.getMergedOptionsForTransform(name);
-                    this.transformOutput = this.activeTransform.func(this.transformInput, opts);
+                    this.applyActiveTransformOutput();
                 }
             },
             getTransformsByCategory: function(category) {
@@ -1095,6 +1095,66 @@ class TransformTool extends Tool {
                 const stages = recipe && recipe.stages;
                 return !!(stages && (stages.translate || stages.carrier));
             },
+            applyActiveTransformOutput: async function(options) {
+                const generation = ++this.transformApplyGeneration;
+                const transform = this.activeTransform;
+                const input = this.transformInput;
+                const preserveEmojis = !!(options && options.preserveEmojis);
+
+                if (!transform || !input || this.activeTab !== 'transforms') {
+                    this.transformOutputKind = 'text';
+                    this.transformOutput = '';
+                    return { applied: false };
+                }
+
+                const opts = this.getMergedOptionsForTransform(transform.name);
+                const stagedRecipe = this.stagedRecipeForTransform(transform);
+
+                try {
+                    let result;
+                    if (this.stagedRecipeNeedsAsync(stagedRecipe)) {
+                        result = await window.TransformChains.runStagedRecipeAsync(
+                            stagedRecipe,
+                            input,
+                            opts
+                        );
+                    } else {
+                        let value;
+                        if (preserveEmojis) {
+                            const segments = window.EmojiUtils.splitEmojis(input);
+                            value = window.EmojiUtils.joinEmojis(segments.map(segment => {
+                                if (segment.length > 1 || /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(segment)) {
+                                    return segment;
+                                }
+                                return transform.func(segment, opts);
+                            }));
+                        } else {
+                            value = transform.func(input, opts);
+                        }
+                        result = { kind: 'text', value };
+                    }
+
+                    if (generation !== this.transformApplyGeneration || this.activeTransform !== transform) {
+                        return { applied: false, stale: true };
+                    }
+
+                    this.transformOutputKind = result && result.kind === 'image' ? 'image' : 'text';
+                    this.transformOutput = result && result.value != null ? String(result.value) : '';
+                    return { applied: true, kind: this.transformOutputKind };
+                } catch (e) {
+                    if (generation !== this.transformApplyGeneration || this.activeTransform !== transform) {
+                        return { applied: false, stale: true };
+                    }
+                    this.transformOutputKind = 'text';
+                    this.transformOutput = '';
+                    this.showNotification(
+                        `${transform.name} failed: ${e.message || 'Could not apply recipe.'}`,
+                        'error',
+                        'fas fa-exclamation-triangle'
+                    );
+                    return { applied: false, error: e };
+                }
+            },
             applyTransform: async function(transform, event) {
                 event && event.preventDefault();
                 event && event.stopPropagation();
@@ -1109,39 +1169,16 @@ class TransformTool extends Tool {
                     // Track last used
                     this.saveLastUsedTransform(transform.name);
                     
+                    const outcome = await this.applyActiveTransformOutput();
+                    if (!outcome.applied) {
+                        return;
+                    }
+
                     if (transform.name === 'Random Mix') {
-                        this.transformOutputKind = 'text';
-                        this.transformOutput = window.transforms.randomizer.func(this.transformInput);
                         const transformInfo = window.transforms.randomizer.getLastTransformInfo();
                         if (transformInfo.length > 0) {
                             const transformsList = transformInfo.map(t => t.transformName).join(', ');
                             this.showNotification(`Mixed with: ${transformsList}`, 'success', 'fas fa-random');
-                        }
-                    } else {
-                        const opts = this.getMergedOptionsForTransform(transform.name);
-                        const stagedRecipe = this.stagedRecipeForTransform(transform);
-                        if (this.stagedRecipeNeedsAsync(stagedRecipe)) {
-                            try {
-                                const result = await window.TransformChains.runStagedRecipeAsync(
-                                    stagedRecipe,
-                                    this.transformInput,
-                                    opts
-                                );
-                                this.transformOutputKind = result && result.kind === 'image' ? 'image' : 'text';
-                                this.transformOutput = result && result.value != null ? String(result.value) : '';
-                            } catch (e) {
-                                this.transformOutputKind = 'text';
-                                this.transformOutput = '';
-                                this.showNotification(
-                                    `${transform.name} failed: ${e.message || 'Could not apply recipe.'}`,
-                                    'error',
-                                    'fas fa-exclamation-triangle'
-                                );
-                                return;
-                            }
-                        } else {
-                            this.transformOutputKind = 'text';
-                            this.transformOutput = transform.func(this.transformInput, opts);
                         }
                     }
                     
@@ -1377,15 +1414,7 @@ class TransformTool extends Tool {
             },
             autoTransform: function() {
                 if (this.transformInput && this.activeTransform && this.activeTab === 'transforms') {
-                    const opts = this.getMergedOptionsForTransform(this.activeTransform.name);
-                    const segments = window.EmojiUtils.splitEmojis(this.transformInput);
-                    const transformedSegments = segments.map(segment => {
-                        if (segment.length > 1 || /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(segment)) {
-                            return segment;
-                        }
-                        return this.activeTransform.func(segment, opts);
-                    });
-                    this.transformOutput = window.EmojiUtils.joinEmojis(transformedSegments);
+                    this.applyActiveTransformOutput({ preserveEmojis: true });
                 }
             },
             refreshCustomSpellingTransforms: function() {
@@ -1422,9 +1451,10 @@ class TransformTool extends Tool {
                     });
                     this.activeTransform = match || null;
                     if (match && this.transformInput && this.activeTab === 'transforms') {
-                        const opts = this.getMergedOptionsForTransform(match.name);
-                        this.transformOutput = match.func(this.transformInput, opts);
+                        this.applyActiveTransformOutput();
                     } else if (!match) {
+                        ++this.transformApplyGeneration;
+                        this.transformOutputKind = 'text';
                         this.transformOutput = '';
                     }
                 }
@@ -1440,8 +1470,7 @@ class TransformTool extends Tool {
                     this.transformRefreshLexemeAnalysis();
                 }
                 if (this.activeTransform && this.activeTab === 'transforms') {
-                    const opts = this.getMergedOptionsForTransform(this.activeTransform.name);
-                    this.transformOutput = this.activeTransform.func(this.transformInput, opts);
+                    this.applyActiveTransformOutput();
                 }
             },
             transformOptionsModalOpen(val) {
