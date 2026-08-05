@@ -23,7 +23,8 @@ P4RS3LT0NGV3/
 │   │   ├── decoder.js         # Universal decode engine
 │   │   ├── steganography.js   # Emoji / invisible carriers
 │   │   ├── toolRegistry.js    # Registers tools, merges Vue data/methods
-│   │   ├── transformChains.js # Saved transform chains & per-word cycles
+│   │   ├── transformChains.js # Staged/legacy recipes, runners & per-word cycles
+│   │   ├── transformRecipeStages.js # Stage taxonomy, validation & templates
 │   │   └── transformOptions.js
 │   ├── data/                    # Static data shipped with the app (see note below)
 │   │   ├── anticlassifierPrompt.js
@@ -122,7 +123,8 @@ dist/   # npm run build — gitignored
 
 - **`js/core/`** — Shared business logic and infrastructure (not tab-specific)
   - Examples: `decoder.js` (DecodeTool, decoder pipeline), `steganography.js` (EmojiTool, steg engine), `toolRegistry.js` (registers tools, merges Vue surface), `transformOptions.js` (shared transform UI helpers)
-  - Transform chains and cycles are core logic in `transformChains.js`, registered into `window.transforms`; their UI lives on `TransformTool`.
+  - `transformRecipeStages.js` defines the fixed staged-recipe rail, stage allowlists, validation, flattening, and editable template presets.
+  - `transformChains.js` persists and runs staged recipes, preserves legacy free-form chains, and implements `word_safe` / `one_way` cycles. Registered recipes and cycles live in `window.transforms`; their UI remains on `TransformTool`.
 - **`js/utils/`** — Cross-cutting helpers (`clipboard`, `EmojiUtils` in `emoji.js`, notifications, `theme.js`, `openrouterModels.js`, etc.)
 - **`js/data/`** — Committed static payloads (models, prompts, glitch token data, end sequences, `emojiCompatibility.js`). **`emojiData.js`** is **not** edited here — it is **generated** to `dist/js/data/emojiData.js` by `npm run build:emoji`.
 - **`src/`** — `emojiWordMap.js` feeds the emoji build; `transformers/` holds transformer modules
@@ -134,6 +136,15 @@ dist/   # npm run build — gitignored
 
 - **Transformers** (`src/transformers/`) - Text transformation logic (encoding/decoding)
 - **Tools** (`js/tools/`) - UI features/tabs (Transform tab, Decoder tab, Emoji tab)
+
+### Extending Transform Recipes
+
+- Keep the stage order **Normalize → Translate → Obfuscate → Present → Conceal → Carrier**. Carrier is terminal.
+- Update `STAGE_TRANSFORM_CATEGORIES`, `STAGE_ALLOW_KEYS`, or `STAGE_DENY_KEYS` in `js/core/transformRecipeStages.js` when changing stage eligibility; add recipe validation coverage for the new rule.
+- Add shortcuts to `TransformRecipeStages.TEMPLATES`. A template must remain an editable staged recipe, not a new persistence or execution mode.
+- Preserve old node-list records and the marked **Free-form (legacy)** path. Do not wipe `transform-chains-v1` or `transform-cycles-v1`.
+- A `word_safe` cycle must reject transforms that cannot safely round-trip one word at a time. Use `one_way` for Translate, Carrier, Base64-like, or otherwise unsafe recipes; one-way cycles have no mechanical decode.
+- Opaque-token cycles (“Future B”) are documentation-only and have no current schema or runtime support.
 
 ## 🚀 Getting Started
 
@@ -337,11 +348,13 @@ Full step-by-step guide, token checklist, and testing list: **[docs/THEMES.md](d
 
 ```bash
 # Run all tests
-npm test
+npm run test:all
 
 # Run specific test suite
 npm run test:universal      # Universal decoder tests
 npm run test:steg           # Steganography options tests
+npm run test:chains         # Saved chains and cycle behavior
+npm run test:recipes        # Staged recipe validation and runners
 ```
 
 ### Writing Tests
@@ -438,7 +451,7 @@ This:
 ## ✅ Checklist Before Submitting
 
 - [ ] Code follows existing style
-- [ ] Tests pass (`npm test`)
+- [ ] Tests pass (`npm run test:all`)
 - [ ] Templates built (`npm run build:templates`) if template files were edited
 - [ ] Tested in browser (`npm run build`, then open `dist/index.html` or `npm start`)
 - [ ] No console errors

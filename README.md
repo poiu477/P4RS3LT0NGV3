@@ -268,14 +268,19 @@ Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider**
 - **Per-transform options**: Gear icon where a transform exposes settings.
 - **Keyboard shortcut**: **T** (shown in the tab title).
 
-### Chains & Cycles (on the Transform tab)
+### Recipes & Cycles (on the Transform tab)
 
-- **Chain** — an ordered pipeline of transforms applied to the whole input; each node snapshots its own options (e.g. Caesar shift 3 then shift 7).
-- **Cycle** — rotate a list of chains across words (word 1 → chain A, word 2 → chain B, wrap).
-- Saved entities appear under the **chains** category like ordinary transforms (search, favorites, click-to-apply).
-- Nested chains/cycles are not allowed.
-- If a recipe cannot mechanically reverse, use **AI decode** in the Chains manager (uses your configured AI providers).
-- Export/import JSON from the Chains manager; copy the human-readable recipe for sharing.
+- **Recipe** — a typed, whole-input pipeline arranged on the fixed rail **Normalize → Translate → Obfuscate → Present → Conceal → Carrier**. Obfuscate requires at least one step; the other stages are optional, and each transform picker only offers transforms suited to that stage.
+- **Templates** — **Cipher → Base64**, **Translate → Theban**, and **Cipher → Base64 → QR** are editable shortcuts that prefill the same staged recipe builder; they are not separate execution modes.
+- **Translate** — optionally runs through your configured AI provider and model. Recipes that include it show an AI badge and require a working provider key when applied.
+- **Carriers** — optionally wrap the final result as a QR image or emoji-steganography text. Carrier is always terminal; QR output is shown as an image preview.
+- **Free-form (legacy)** — the original unrestricted whole-input chain builder remains available as an escape hatch and existing `transform-chains-v1` saves continue to load.
+- **Cycle** — rotates saved recipes across words (word 1 → recipe A, word 2 → recipe B, wrap). The default **word-safe** mode rejects recipes such as Base64, Translate, or Carrier pipelines that cannot safely operate and reverse one word at a time. Enable **one-way** to allow them; that cycle is not mechanically decodable and is marked for AI decode.
+- Saved recipes and cycles appear under the **chains** category like ordinary transforms (search, favorites, click-to-apply). Nested recipes/cycles are not allowed.
+- If a recipe cannot mechanically reverse, use **AI decode** in the manager (uses your configured AI providers).
+- Export/import JSON from the manager; copy the human-readable recipe for sharing.
+
+> **Future B:** Opaque-token cycles—preserving word boundaries by wrapping arbitrary recipe output in tokens—are a possible future design, not part of the current cycle modes.
 
 ### 🌐 **AI Translation** (AI-powered)
 
