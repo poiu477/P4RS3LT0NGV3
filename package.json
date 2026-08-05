@@ -21,7 +21,8 @@
     "test:steg": "node tests/test_steganography_options.js",
     "test:chains": "node tests/test_transform_chains.js",
     "test:recipes": "node tests/test_transform_recipes.js",
-    "test:all": "npm run test:universal && npm run test:steg && npm run test:lexeme && npm run test:lexeme-ui && npm run test:chains && npm run test:recipes",
+    "test:apply-mode": "node tests/test_transform_apply_mode.js",
+    "test:all": "npm run test:universal && npm run test:steg && npm run test:lexeme && npm run test:lexeme-ui && npm run test:chains && npm run test:recipes && npm run test:apply-mode",
     "precommit": "npm run test:all"
   },
   "repository": {
