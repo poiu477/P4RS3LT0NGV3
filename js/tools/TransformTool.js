@@ -905,12 +905,9 @@ class TransformTool extends Tool {
                 if (next === this.transformIoMode) return;
                 this.transformIoMode = next;
                 window.TransformApplyMode.saveMode(localStorage, next);
-                if (this.transformInput && this.activeTransform && this.activeTab === 'transforms') {
-                    if (next === 'decode') {
-                        this.showNotification('Decoding…', 'info', 'fas fa-spinner');
-                    }
-                    this.applyTransform(this.activeTransform);
-                }
+                // Do not auto-apply on mode flip — user applies via Transform/Decode
+                // button or a second click on the selected tile.
+                this.transformSelectionApplied = false;
             },
             transformRefreshLexemeAnalysis: function() {
                 if (typeof window === 'undefined' || !window.LexemeAnalysis || typeof window.LexemeAnalysis.analyze !== 'function') {
