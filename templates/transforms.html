@@ -35,7 +35,7 @@
                         />
                     </div>
 
-                    <div class="output-section" v-if="transformOutput">
+                    <div class="output-section" v-if="transformOutput || transformOutputImage">
                         <div class="output-heading">
                             <h4>
                                 <i class="fas fa-check-circle"></i>
@@ -46,17 +46,18 @@
                         <div class="output-container" :class="{ 'signwriting-output': activeTransform && activeTransform.category === 'signwriting' }">
                             <img
                                 v-if="transformOutputKind === 'image'"
-                                :src="transformOutput"
+                                :src="transformOutputImage"
                                 :alt="activeTransform ? activeTransform.name + ' image output' : 'Transformed image output'"
                                 class="transform-image-output"
                             >
                             <textarea
-                                v-else
+                                v-if="transformOutputKind !== 'image'"
                                 readonly
                                 v-model="transformOutput"
                                 aria-label="Transform output text"
                             ></textarea>
-                            <button v-if="transformOutputKind !== 'image'" class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
+                            <p v-else-if="transformOutput" class="transform-image-output-text">{{ transformOutput }}</p>
+                            <button v-if="transformOutput" class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
                                 <i class="fas fa-copy"></i>
                             </button>
                         </div>
@@ -191,7 +192,7 @@
 
                                 <div v-if="savedChains().length" class="chain-list">
                                     <h5>Recipes &amp; free-form chains</h5>
-                                    <small class="chain-manager-hint">Enter text above, then hit Apply on a recipe to run it into the output.</small>
+                                    <small class="chain-manager-hint">Find a recipe in the transform list above and click it, just like any other method.</small>
                                     <div v-for="chain in savedChains()" :key="chain.id" class="chain-list-item">
                                         <div class="chain-list-item-main">
                                             <strong>{{ chain.name }}</strong>
@@ -203,9 +204,6 @@
                                             <small>{{ chainRegisteredEntry(chain) ? chainRegisteredEntry(chain).description : '' }}</small>
                                         </div>
                                         <div class="chain-list-item-actions">
-                                            <button type="button" class="chain-action-btn chain-action-btn-primary" @click="applySavedChain(chain)" title="Apply recipe">
-                                                <i class="fas fa-play"></i> Apply
-                                            </button>
                                             <button type="button" class="chain-action-btn" @click="chainCopyRecipe(chain, 'chain')" title="Copy recipe">
                                                 <i class="fas fa-copy"></i>
                                             </button>

@@ -5118,6 +5118,14 @@ body.transform-options-modal-open {
     margin: 0 auto;
 }
 
+.transform-image-output-text {
+    font-family: 'Fira Code', 'Courier New', monospace;
+    font-size: 0.85rem;
+    word-break: break-all;
+    margin: 10px 40px 0 0;
+    opacity: 0.85;
+}
+
 .copy-button {
     position: absolute;
     top: 8px;

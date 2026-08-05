@@ -43,6 +43,7 @@ class TransformTool extends Tool {
             transformInput: 'Hello World',
             transformLexemeAnalysis: { totalFindings: 0, findings: [], summary: 'No Latin-root wording findings.' },
             transformOutput: '',
+            transformOutputImage: '',
             transformOutputKind: 'text',
             transformIoMode: (window.TransformApplyMode
                 ? window.TransformApplyMode.loadMode(localStorage)
@@ -558,21 +559,7 @@ class TransformTool extends Tool {
                 }
                 this.chainBuilderOpen = false;
                 this.refreshChainsTransforms();
-                this.showNotification('Recipe saved — use Apply on the list (with text in the input)', 'success', 'fas fa-link');
-            },
-
-            applySavedChain: function(chain) {
-                const entry = this.chainRegisteredEntry(chain);
-                if (!entry) {
-                    this.refreshChainsTransforms();
-                    const again = this.chainRegisteredEntry(chain);
-                    if (!again) {
-                        this.showNotification('Recipe is not available yet. Try refreshing the page.', 'error', 'fas fa-link');
-                        return;
-                    }
-                    return this.applyTransform(again);
-                }
-                return this.applyTransform(entry);
+                this.showNotification('Recipe saved — find it in the transform list and click it (with text in the input)', 'success', 'fas fa-link');
             },
 
             // -- LEGACY_FREEFORM_BUILDER: remove with free-form chain support --
@@ -1133,46 +1120,73 @@ class TransformTool extends Tool {
                 const transform = this.activeTransform;
                 const input = this.transformInput;
                 const preserveEmojis = !!(options && options.preserveEmojis);
+                const copyOnSuccess = !!(options && options.copyOnSuccess);
 
                 if (!transform || !input || this.activeTab !== 'transforms') {
                     this.transformOutputKind = 'text';
                     this.transformOutput = '';
+                    this.transformOutputImage = '';
                     return { applied: false };
                 }
 
                 const opts = this.getMergedOptionsForTransform(transform.name);
                 const stagedRecipe = this.stagedRecipeForTransform(transform);
+                const action = window.TransformApplyMode
+                    ? window.TransformApplyMode.resolveAction(transform, this.transformIoMode)
+                    : 'encode';
 
                 try {
-                    let result;
-                    if (this.stagedRecipeNeedsAsync(stagedRecipe)) {
-                        result = await window.TransformChains.runStagedRecipeAsync(
-                            stagedRecipe,
-                            input,
-                            opts
-                        );
-                    } else {
-                        let value;
-                        if (preserveEmojis) {
-                            const segments = window.EmojiUtils.splitEmojis(input);
-                            value = window.EmojiUtils.joinEmojis(segments.map(segment => {
-                                if (segment.length > 1 || /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(segment)) {
-                                    return segment;
-                                }
-                                return transform.func(segment, opts);
-                            }));
-                        } else {
-                            value = transform.func(input, opts);
+                    let result = { kind: 'text', value: '' };
+
+                    if (action === 'ai_decode') {
+                        if (!window.AIProvider || typeof window.AIProvider.getConfiguredProviders !== 'function'
+                            || !window.AIProvider.getConfiguredProviders().length) {
+                            throw new Error('Configure an AI provider in Settings to decode this transform.');
                         }
+                        const recipe = window.TransformApplyMode.describeForAiDecode(transform, window.TransformChains);
+                        const text = await window.TransformChains.aiDecode(recipe, input, {
+                            model: this.chainDecodeModel || localStorage.getItem('chain-decode-model') || ''
+                        });
+                        result = { kind: 'text', value: text };
+                    } else if (action === 'reverse') {
+                        if (typeof transform.reverse !== 'function') {
+                            throw new Error('No reverse function available.');
+                        }
+                        result = { kind: 'text', value: String(transform.reverse(input, opts) || '') };
+                    } else if (this.stagedRecipeNeedsAsync(stagedRecipe)) {
+                        result = await window.TransformChains.runStagedRecipeAsync(stagedRecipe, input, opts);
+                    } else if (preserveEmojis) {
+                        const segments = window.EmojiUtils.splitEmojis(input);
+                        const value = window.EmojiUtils.joinEmojis(segments.map(segment => {
+                            if (segment.length > 1 || /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(segment)) {
+                                return segment;
+                            }
+                            return transform.func(segment, opts);
+                        }));
                         result = { kind: 'text', value };
+                    } else {
+                        result = { kind: 'text', value: transform.func(input, opts) };
                     }
 
                     if (generation !== this.transformApplyGeneration || this.activeTransform !== transform) {
                         return { applied: false, stale: true };
                     }
 
-                    this.transformOutputKind = result && result.kind === 'image' ? 'image' : 'text';
-                    this.transformOutput = result && result.value != null ? String(result.value) : '';
+                    if (result && result.kind === 'image') {
+                        this.transformOutputKind = 'image';
+                        this.transformOutputImage = result.value != null ? String(result.value) : '';
+                        this.transformOutput = result.text != null ? String(result.text) : '';
+                    } else {
+                        this.transformOutputKind = 'text';
+                        this.transformOutputImage = '';
+                        this.transformOutput = result && result.value != null ? String(result.value) : '';
+                    }
+
+                    if (copyOnSuccess && this.transformOutput) {
+                        this.isTransformCopy = true;
+                        this.forceCopyToClipboard(this.transformOutput);
+                    }
+
                     return { applied: true, kind: this.transformOutputKind };
                 } catch (e) {
                     if (generation !== this.transformApplyGeneration || this.activeTransform !== transform) {
@@ -1180,8 +1194,9 @@ class TransformTool extends Tool {
                     }
                     this.transformOutputKind = 'text';
                     this.transformOutput = '';
+                    this.transformOutputImage = '';
                     this.showNotification(
-                        `${transform.name} failed: ${e.message || 'Could not apply recipe.'}`,
+                        (e && e.message) ? e.message : (transform.name + ' failed.'),
                         'error',
                         'fas fa-exclamation-triangle'
                     );
@@ -1201,7 +1216,7 @@ class TransformTool extends Tool {
                 this.activeTransform = transform;
 
                 if (!this.transformInput) {
-                    this.showNotification('Enter text in the input box, then Apply the recipe again.', 'info', 'fas fa-keyboard');
+                    this.showNotification('Enter text in the input box, then click the transform again.', 'info', 'fas fa-keyboard');
                     document.querySelectorAll('.transform-button').forEach(button => {
                         button.classList.remove('active');
                     });
@@ -1215,7 +1230,7 @@ class TransformTool extends Tool {
                 // Track last used
                 this.saveLastUsedTransform(transform.name);
                 
-                const outcome = await this.applyActiveTransformOutput();
+                const outcome = await this.applyActiveTransformOutput({ copyOnSuccess: true });
                 if (!outcome.applied) {
                     return;
                 }
@@ -1228,15 +1243,10 @@ class TransformTool extends Tool {
                     }
                 }
                 
-                if (this.transformOutputKind === 'text') {
-                    this.isTransformCopy = true;
-                    this.forceCopyToClipboard(this.transformOutput);
-                }
-                
                 if (transform.name !== 'Random Mix') {
-                    const message = this.transformOutputKind === 'image'
+                    const message = this.transformOutputKind === 'image' && !this.transformOutput
                         ? `${transform.name} image preview ready!`
-                        : `${transform.name} applied and copied!`;
+                        : `${transform.name}${this.transformIoMode === 'decode' ? ' decoded and copied!' : ' applied and copied!'}`;
                     this.showNotification(message, 'success', 'fas fa-check');
                 }
                 
@@ -1501,6 +1511,7 @@ class TransformTool extends Tool {
                         ++this.transformApplyGeneration;
                         this.transformOutputKind = 'text';
                         this.transformOutput = '';
+                        this.transformOutputImage = '';
                     }
                 }
                 this.pruneFavoritesForMissingTransforms();
