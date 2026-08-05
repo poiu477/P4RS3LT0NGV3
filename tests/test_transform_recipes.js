@@ -225,6 +225,25 @@ assert.match(translateDescription, /Translate/, 'description must mention the tr
 assert.match(translateDescription, /Latin/i, 'description must name the target language');
 assert.match(translateDescription, /Theban/, 'description must still include the transform-backed stage');
 
+const decodeOrder = TC.describeDecodeOrder(translateRecipe);
+assert.match(decodeOrder, /^1\.\s*Undo.*Theban/m, 'decode step 1 undoes the last encode step (Theban)');
+assert.match(decodeOrder, /2\.\s*Translate Latin → English/m, 'decode step 2 undoes translate after present');
+assert.ok(
+    decodeOrder.indexOf('Theban') < decodeOrder.indexOf('Translate Latin'),
+    'decode order lists Theban undo before Translate→English'
+);
+
+const encodeNodes = [
+    { transform: 'caesar', options: { shift: 3 } },
+    { transform: 'base64', options: {} }
+];
+const encodedForReverse = TC.runChainNodes(encodeNodes, 'hi');
+assert.strictEqual(
+    TC.reverseChainNodes(encodeNodes, encodedForReverse),
+    'hi',
+    'mechanical reverse undoes last encode step first (base64 then caesar)'
+);
+
 const carrierRecipeId = TC.saveRecipe({
     name: 'Caesar Then QR',
     kind: 'staged',
@@ -383,7 +402,35 @@ TC.runStagedRecipeAsync(asyncRecipe, 'Hello').then((result) => {
     assert.strictEqual(result.kind, 'image');
     assert.ok(result.value.indexOf('data:image') === 0);
     assert.strictEqual(result.text, 'aGk=');
-    console.log('test_transform_recipes: OK');
+
+    var captured = null;
+    ctx.AIProvider = {
+        chatCompletion: function(messages) {
+            captured = messages;
+            return Promise.resolve({
+                choices: [{ message: { content: 'hello' } }]
+            });
+        }
+    };
+    return TC.aiDecode(
+        'Sequential chain: Translate to German [translate] → Circled [circled]',
+        'Ⓗⓐⓛⓛⓞ',
+        {
+            decodeOrder: '1. Undo Circled [circled]\n2. Translate German → English [translate]'
+        }
+    ).then(function(out) {
+        assert.strictEqual(out, 'hello');
+        var user = captured && captured[1] && captured[1].content;
+        assert.ok(user && user.indexOf('DECODE ORDER') !== -1, 'AI decode prompt includes DECODE ORDER');
+        assert.ok(user && /1\.\s*Undo Circled/.test(user), 'decode order starts with last encode step');
+        assert.ok(user && /2\.\s*Translate German → English/.test(user),
+            'decode order ends with translate back to English');
+        assert.ok(
+            user.indexOf('Undo Circled') < user.indexOf('Translate German → English'),
+            'prompt lists undos in reverse encode order'
+        );
+        console.log('test_transform_recipes: OK');
+    });
 }).catch((err) => {
     console.error(err);
     process.exitCode = 1;

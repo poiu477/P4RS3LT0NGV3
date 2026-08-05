@@ -26,6 +26,8 @@
                             <span>
                                 <strong>{{ decoderLangDetected.language }}</strong> detected
                                 <small v-if="decoderLangDetected.confidence === 'medium'" class="lang-confidence">(likely)</small>
+                                <small v-if="decoderTranslating" class="lang-confidence">· translating to English…</small>
+                                <small v-else class="lang-confidence">· will auto-translate to English</small>
                             </span>
                         </div>
                         <div class="decoder-lang-actions">
@@ -36,6 +38,7 @@
                             >
                                 <i :class="decoderTranslating ? 'fas fa-spinner fa-spin' : 'fas fa-arrow-right'"></i>
                                 {{ decoderTranslating ? 'Translating...' : 'Translate to English' }}
+                                <small v-if="decoderTranslating" class="lang-confidence">(undoing language)</small>
                             </button>
                         </div>
                         <div v-if="decoderTranslateError" class="decoder-translate-error">

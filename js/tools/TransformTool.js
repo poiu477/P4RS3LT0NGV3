@@ -876,11 +876,17 @@ class TransformTool extends Tool {
                     return;
                 }
                 const recipe = window.TransformChains.describeRecipe(entity, kind);
+                const decodeOrder = window.TransformChains.describeDecodeRecipe
+                    ? window.TransformChains.describeDecodeRecipe(entity, kind)
+                    : '';
                 if (this.chainDecodeModel) {
                     localStorage.setItem('chain-decode-model', this.chainDecodeModel);
                 }
                 this.chainDecodeLoading = true;
-                window.TransformChains.aiDecode(recipe, this.chainDecodeInput, { model: this.chainDecodeModel })
+                window.TransformChains.aiDecode(recipe, this.chainDecodeInput, {
+                    model: this.chainDecodeModel,
+                    decodeOrder: decodeOrder
+                })
                     .then(text => { this.chainDecodeOutput = text; })
                     .catch(e => { this.chainDecodeError = e.message || 'Decode failed.'; })
                     .finally(() => { this.chainDecodeLoading = false; });
@@ -1158,8 +1164,12 @@ class TransformTool extends Tool {
                             throw new Error('Configure an AI provider in Settings to decode this transform.');
                         }
                         const recipe = window.TransformApplyMode.describeForAiDecode(transform, window.TransformChains);
+                        const decodeOrder = window.TransformApplyMode.describeDecodeOrderForAi
+                            ? window.TransformApplyMode.describeDecodeOrderForAi(transform, window.TransformChains)
+                            : '';
                         const text = await window.TransformChains.aiDecode(recipe, input, {
-                            model: this.chainDecodeModel || localStorage.getItem('chain-decode-model') || ''
+                            model: this.chainDecodeModel || localStorage.getItem('chain-decode-model') || '',
+                            decodeOrder: decodeOrder
                         });
                         result = { kind: 'text', value: text };
                     } else if (action === 'reverse') {

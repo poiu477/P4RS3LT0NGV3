@@ -55,12 +55,29 @@
         return bits.join(' — ');
     }
 
+    /** Numbered undo steps (encode reversed) for AI decode prompts. */
+    function describeDecodeOrderForAi(transform, chainsApi) {
+        if (!transform || !chainsApi) return '';
+        if (transform.isChain && transform.chainId && chainsApi.describeDecodeRecipe) {
+            var chain = (chainsApi.loadChains && chainsApi.loadChains() || [])
+                .filter(function(c) { return c.id === transform.chainId; })[0];
+            if (chain) return chainsApi.describeDecodeRecipe(chain, 'chain');
+        }
+        if (transform.isCycle && transform.cycleId && chainsApi.describeDecodeRecipe) {
+            var cycle = (chainsApi.loadCycles && chainsApi.loadCycles() || [])
+                .filter(function(c) { return c.id === transform.cycleId; })[0];
+            if (cycle) return chainsApi.describeDecodeRecipe(cycle, 'cycle');
+        }
+        return '';
+    }
+
     global.TransformApplyMode = {
         STORAGE_KEY: STORAGE_KEY,
         normalizeMode: normalizeMode,
         loadMode: loadMode,
         saveMode: saveMode,
         resolveAction: resolveAction,
-        describeForAiDecode: describeForAiDecode
+        describeForAiDecode: describeForAiDecode,
+        describeDecodeOrderForAi: describeDecodeOrderForAi
     };
 })(typeof window !== 'undefined' ? window : this);

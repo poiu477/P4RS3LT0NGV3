@@ -751,6 +751,52 @@
     // ---- recipe keys & AI-assisted decode ----------------------------------
 
     /**
+     * One undo step for AI / UI: reverse of encode wording.
+     * Translate undoes as "<lang> → English"; transform nodes as "Undo Name".
+     */
+    function describeDecodeStep(node) {
+        if (node && typeof node.transform === 'string') {
+            var key = node.transform;
+            var t = lookupTransform(key);
+            var label = t ? (t.name + ' [' + key + ']') : key;
+            return 'Undo ' + label + ' ' + serializeNodeOptions(node && node.options);
+        }
+        if (node && node.type === 'translate') {
+            var stagesApi = global.TransformRecipeStages;
+            var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+                ? stagesApi.resolveTranslateLanguage(node.lang)
+                : { name: String(node.lang || ''), code: String(node.lang || '') };
+            return 'Translate ' + (language.name || node.lang || '?') + ' → English [translate]';
+        }
+        if (node && node.type === 'qr') {
+            return 'Extract payload text from QR carrier [qr]';
+        }
+        if (node && node.type === 'emoji_stego') {
+            return 'Decode emoji steganography carrier [emoji_stego]';
+        }
+        return 'Undo ' + ((node && node.type) || '?');
+    }
+
+    /** Encode-order node list for a chain or staged recipe. */
+    function getChainEncodeNodes(chain) {
+        if (!chain) return [];
+        if (chain.kind === 'staged') return getStagedNodes(chain);
+        return getRunnableChainNodes(chain);
+    }
+
+    /**
+     * Numbered undo steps in the order decode must run them (encode reversed).
+     * Encode A → B → C becomes decode: 1. Undo C, 2. Undo B, 3. Undo A.
+     */
+    function describeDecodeOrder(chain) {
+        var nodes = getChainEncodeNodes(chain).slice().reverse();
+        if (!nodes.length) return '(empty recipe)';
+        return nodes.map(function(node, i) {
+            return (i + 1) + '. ' + describeDecodeStep(node);
+        }).join('\n');
+    }
+
+    /**
      * A human- and model-readable description of exactly what was applied.
      *
      * Mechanical reverse only works when every node is individually
@@ -772,12 +818,33 @@
         return 'Sequential chain applied to the whole text: ' + describeChain(entity);
     }
 
-    /** Build the decode prompt from a recipe key. */
-    function buildDecodePrompt(recipeKey, text) {
+    /** Decode-order recipe hint (encode steps reversed). */
+    function describeDecodeRecipe(entity, kind) {
+        if (kind === 'cycle') {
+            var chains = resolveCycleChains(entity);
+            var parts = chains.map(function(c, i) {
+                return '[' + (i + 1) + ']\n' + describeDecodeOrder(c);
+            });
+            return 'Per-word cycle decode — for each word, undo that word\'s chain ' +
+                'in reverse step order (same word→chain mapping as encode):\n' +
+                parts.join('\n');
+        }
+        return describeDecodeOrder(entity);
+    }
+
+    /** Build the decode prompt from encode + explicit reverse decode order. */
+    function buildDecodePrompt(recipeKey, text, decodeOrder) {
+        var orderBlock = decodeOrder
+            ? ('DECODE ORDER (apply these undos in this exact sequence — last encode step first):\n' +
+                decodeOrder + '\n\n')
+            : ('Undo the transformations in reverse order (last encode step first).\n\n');
         return 'The following text was produced by applying a known sequence of ' +
-            'reversible text transformations (encodings, ciphers, and Unicode styling).\n\n' +
-            'TRANSFORMATION RECIPE (applied in this order):\n' + recipeKey + '\n\n' +
-            'Undo the transformations in reverse order to recover the original text. ' +
+            'text transformations. Steps may include encodings, ciphers, Unicode styling, ' +
+            'and language translation (e.g. English → German).\n\n' +
+            'ENCODE ORDER (what was applied):\n' + recipeKey + '\n\n' +
+            orderBlock +
+            'Follow DECODE ORDER exactly. If a step says Translate <lang> → English, ' +
+            'you MUST produce English — do not leave foreign-language text in the result. ' +
             'Output ONLY the recovered plaintext — no explanation, no preamble, no quotes.\n\n' +
             'TRANSFORMED TEXT:\n' + text;
     }
@@ -786,6 +853,8 @@
      * Ask the configured AI provider to undo a chain/cycle using its recipe key.
      * Uses the same multi-provider client as every other AI tool, so whichever
      * model the user picked applies here too.
+     *
+     * opts.decodeOrder — numbered undo steps (encode reversed). Strongly preferred.
      */
     function aiDecode(recipeKey, text, opts) {
         opts = opts || {};
@@ -798,9 +867,10 @@
             {
                 role: 'system',
                 content: 'You are a decoding engine for layered text transformations. ' +
+                    'You undo steps in the provided DECODE ORDER (last encode step first). ' +
                     'You output only the recovered plaintext.'
             },
-            { role: 'user', content: buildDecodePrompt(recipeKey, text) }
+            { role: 'user', content: buildDecodePrompt(recipeKey, text, opts.decodeOrder || '') }
         ], {
             model: model,
             temperature: 0,
@@ -861,6 +931,8 @@
         recipeIsWordSafe: recipeIsWordSafe,
         describeChain: describeChain,
         describeRecipe: describeRecipe,
+        describeDecodeOrder: describeDecodeOrder,
+        describeDecodeRecipe: describeDecodeRecipe,
         buildDecodePrompt: buildDecodePrompt,
         aiDecode: aiDecode,
         previewNodes: previewNodes,
