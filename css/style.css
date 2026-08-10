@@ -1833,12 +1833,58 @@ body.theme-light .mobile-tool-dropdown {
     background-color: var(--accent-color);
     color: var(--text-on-accent);
     border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.35);
 }
 
 .transform-button:hover:not(.active) {
     background-color: var(--button-hover-bg);
     border-color: var(--accent-color);
     color: var(--accent-color);
+}
+
+.transform-apply-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.transform-apply-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 8px;
+    border: 1px solid #3498db;
+    background: rgba(52, 152, 219, 0.2);
+    color: #3498db;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.transform-apply-btn:hover:not(:disabled) {
+    background: rgba(52, 152, 219, 0.35);
+}
+
+.transform-apply-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.transform-apply-btn small {
+    font-weight: 500;
+    opacity: 0.85;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.transform-apply-hint {
+    font-size: 0.85rem;
+    color: var(--text-color);
+    opacity: 0.7;
 }
 
 .tab-content {
