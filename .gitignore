@@ -33,7 +33,7 @@ js/data/emojiData.js
 *.swo
 *~
 .DS_Store
-#.superpowers/
+.superpowers/
 
 # OS files
 Thumbs.db
