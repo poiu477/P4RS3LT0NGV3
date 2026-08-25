@@ -1,11 +1,25 @@
 <div v-if="activeTab === 'transforms'" class="tab-content">
                 <div class="transform-layout">
                     <div class="input-section">
+                        <div class="transform-io-mode" role="group" aria-label="Encode or decode">
+                            <button
+                                type="button"
+                                class="transform-io-mode-btn"
+                                :class="{ active: transformIoMode === 'encode' }"
+                                @click="setTransformIoMode('encode')"
+                            >Encode</button>
+                            <button
+                                type="button"
+                                class="transform-io-mode-btn"
+                                :class="{ active: transformIoMode === 'decode' }"
+                                @click="setTransformIoMode('decode')"
+                            >Decode</button>
+                        </div>
                         <textarea 
                             v-if="transformInputControlKind() === 'textarea'"
                             id="transform-input" 
                             v-model="transformInput" 
-                            placeholder="Enter text to transform..."
+                            :placeholder="transformIoMode === 'decode' ? 'Enter text to decode...' : 'Enter text to transform...'"
                             @input="autoTransform"
                         ></textarea>
                         <input
@@ -13,12 +27,58 @@
                             id="transform-input"
                             type="text"
                             v-model="transformInput"
-                            placeholder="Enter text to transform..."
+                            :placeholder="transformIoMode === 'decode' ? 'Enter text to decode...' : 'Enter text to transform...'"
                             @input="autoTransform"
                             autocomplete="off"
                             autocorrect="off"
                             spellcheck="false"
                         />
+                        <div class="transform-apply-row">
+                            <button
+                                type="button"
+                                class="transform-apply-btn"
+                                :disabled="!activeTransform"
+                                @click="applySelectedTransform($event)"
+                            >
+                                <i class="fas" :class="transformIoMode === 'decode' ? 'fa-unlock' : 'fa-wand-magic-sparkles'"></i>
+                                {{ transformIoMode === 'decode' ? 'Decode' : 'Transform' }}
+                                <small v-if="activeTransform">{{ activeTransform.name }}</small>
+                            </button>
+                            <span v-if="!activeTransform" class="transform-apply-hint">Select a method or recipe below, then Transform</span>
+                            <span v-else-if="!transformSelectionApplied" class="transform-apply-hint">Selected — click Transform or click the tile again</span>
+                        </div>
+                    </div>
+
+                    <div class="output-section" v-if="transformOutput || transformOutputImage">
+                        <div class="output-heading">
+                            <h4>
+                                <i class="fas fa-check-circle"></i>
+                                {{ transformIoMode === 'decode' ? 'Decoded' : 'Transformed' }} Message
+                                <small v-if="activeTransform">({{ activeTransform.name }})</small>
+                            </h4>
+                        </div>
+                        <div class="output-container" :class="{ 'signwriting-output': activeTransform && activeTransform.category === 'signwriting' }">
+                            <img
+                                v-if="transformOutputKind === 'image'"
+                                :src="transformOutputImage"
+                                :alt="activeTransform ? activeTransform.name + ' image output' : 'Transformed image output'"
+                                class="transform-image-output"
+                            >
+                            <textarea
+                                v-if="transformOutputKind !== 'image'"
+                                readonly
+                                v-model="transformOutput"
+                                aria-label="Transform output text"
+                            ></textarea>
+                            <p v-else-if="transformOutput" class="transform-image-output-text">{{ transformOutput }}</p>
+                            <button v-if="transformOutput" class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                        <div class="output-instructions">
+                            <small v-if="transformOutputKind === 'image'"><i class="fas fa-info-circle"></i> Save or share this generated image.</small>
+                            <small v-else><i class="fas fa-info-circle"></i> Copy this text and share it. Use Decode mode to reverse transformations.</small>
+                        </div>
                     </div>
 
                     <div v-if="transformGetLexemeAnalysis().totalFindings" class="lexeme-analysis-card transform-lexeme-card">
@@ -103,6 +163,142 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Recipes: staged pipelines, legacy free-form chains, and per-word cycles -->
+                        <div class="transform-section chain-manager">
+                            <button
+                                type="button"
+                                class="chain-manager-toggle"
+                                @click="chainManageOpen = !chainManageOpen"
+                                :aria-expanded="chainManageOpen ? 'true' : 'false'"
+                            >
+                                <i class="fas" :class="chainManageOpen ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                                <i class="fas fa-link"></i>
+                                Recipes &amp; chains
+                                <small>Build a staged recipe, or rotate saved recipes across words</small>
+                            </button>
+                            <div v-if="chainManageOpen" class="chain-manager-body">
+                                <div class="chain-manager-actions">
+                                    <button type="button" class="btn btn-secondary" @click.stop.prevent="openRecipeBuilder(null)">
+                                        <i class="fas fa-plus"></i> New recipe
+                                    </button>
+                                    <button type="button" class="btn btn-secondary chain-legacy-button" @click.stop.prevent="setLegacyFreeformBuilder(true)">
+                                        <i class="fas fa-sliders"></i> Free-form (legacy)
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" @click.stop.prevent="openCycleBuilder(null)" :disabled="!savedChains().length">
+                                        <i class="fas fa-plus"></i> New per-word cycle
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" @click="chainExportAll">
+                                        <i class="fas fa-file-export"></i> Export
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" @click="$refs.chainImportFile.click()">
+                                        <i class="fas fa-file-import"></i> Import
+                                    </button>
+                                    <input
+                                        ref="chainImportFile"
+                                        type="file"
+                                        accept="application/json,.json"
+                                        hidden
+                                        @change="chainImportAll($event.target.files[0]); $event.target.value = ''"
+                                    >
+                                    <small v-if="!savedChains().length" class="chain-manager-hint">Create a recipe first — cycles rotate through saved recipes.</small>
+                                </div>
+
+                                <div v-if="savedChains().length" class="chain-list">
+                                    <h5>Recipes &amp; free-form chains</h5>
+                                    <small class="chain-manager-hint">Find a recipe in the transform list above and click it, just like any other method.</small>
+                                    <div v-for="chain in savedChains()" :key="chain.id" class="chain-list-item">
+                                        <div class="chain-list-item-main">
+                                            <strong>{{ chain.name }}</strong>
+                                            <span class="chain-badge" :class="chainIsReversibleNow(chain) ? 'chain-badge-reversible' : 'chain-badge-ai-only'">
+                                                {{ chainIsReversibleNow(chain) ? 'Reversible' : 'AI-decode only' }}
+                                            </span>
+                                            <span v-if="recipeHasCarrier(chain)" class="chain-badge chain-badge-carrier">Carrier</span>
+                                            <span v-if="chain.kind !== 'staged'" class="chain-badge chain-badge-legacy">Legacy</span>
+                                            <small>{{ chainRegisteredEntry(chain) ? chainRegisteredEntry(chain).description : '' }}</small>
+                                        </div>
+                                        <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn" @click="chainCopyRecipe(chain, 'chain')" title="Copy recipe">
+                                                <i class="fas fa-copy"></i>
+                                            </button>
+                                            <button type="button" class="chain-action-btn" @click="openChainBuilder(chain)" title="Edit">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            <button
+                                                v-if="!chainIsReversibleNow(chain)"
+                                                type="button"
+                                                class="chain-action-btn"
+                                                @click="chainToggleDecode('chain', chain.id)"
+                                                title="Decode with AI"
+                                            >
+                                                <i class="fas fa-wand-magic-sparkles"></i>
+                                            </button>
+                                            <button type="button" class="chain-action-btn chain-action-btn-danger" @click="deleteSavedChain(chain)" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                        <div v-if="chainDecodeOpenKey === chainDecodeKey('chain', chain.id)" class="chain-decode-box">
+                                            <textarea v-model="chainDecodeInput" placeholder="Paste the transformed text to decode..."></textarea>
+                                            <openrouter-model-select v-model="chainDecodeModel" label="Decode model"></openrouter-model-select>
+                                            <button type="button" class="btn btn-secondary" :disabled="chainDecodeLoading" @click="chainRunAiDecode(chain, 'chain')">
+                                                {{ chainDecodeLoading ? 'Decoding…' : 'Decode with AI' }}
+                                            </button>
+                                            <p v-if="chainDecodeError" class="chain-decode-error">{{ chainDecodeError }}</p>
+                                            <textarea v-if="chainDecodeOutput" readonly :value="chainDecodeOutput" class="chain-decode-output"></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="savedCycles().length" class="chain-list">
+                                    <h5>Per-word cycles</h5>
+                                    <div v-for="cycle in savedCycles()" :key="cycle.id" class="chain-list-item">
+                                        <div class="chain-list-item-main">
+                                            <strong>{{ cycle.name }}</strong>
+                                            <span class="chain-badge" :class="cycleIsReversibleNow(cycle) ? 'chain-badge-reversible' : 'chain-badge-ai-only'">
+                                                {{ cycleIsReversibleNow(cycle) ? 'Reversible' : 'AI-decode only' }}
+                                            </span>
+                                            <small>{{ cycleRegisteredEntry(cycle) ? cycleRegisteredEntry(cycle).description : '' }}</small>
+                                        </div>
+                                        <div class="chain-list-item-actions">
+                                            <button type="button" class="chain-action-btn" @click="chainCopyRecipe(cycle, 'cycle')" title="Copy recipe">
+                                                <i class="fas fa-copy"></i>
+                                            </button>
+                                            <button type="button" class="chain-action-btn" @click="openCycleBuilder(cycle)" title="Edit">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            <button
+                                                v-if="!cycleIsReversibleNow(cycle)"
+                                                type="button"
+                                                class="chain-action-btn"
+                                                @click="chainToggleDecode('cycle', cycle.id)"
+                                                title="Decode with AI"
+                                            >
+                                                <i class="fas fa-wand-magic-sparkles"></i>
+                                            </button>
+                                            <button type="button" class="chain-action-btn chain-action-btn-danger" @click="deleteSavedCycle(cycle)" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                        <div v-if="chainDecodeOpenKey === chainDecodeKey('cycle', cycle.id)" class="chain-decode-box">
+                                            <textarea v-model="chainDecodeInput" placeholder="Paste the transformed text to decode..."></textarea>
+                                            <openrouter-model-select v-model="chainDecodeModel" label="Decode model"></openrouter-model-select>
+                                            <button type="button" class="btn btn-secondary" :disabled="chainDecodeLoading" @click="chainRunAiDecode(cycle, 'cycle')">
+                                                {{ chainDecodeLoading ? 'Decoding…' : 'Decode with AI' }}
+                                            </button>
+                                            <p v-if="chainDecodeError" class="chain-decode-error">{{ chainDecodeError }}</p>
+                                            <textarea v-if="chainDecodeOutput" readonly :value="chainDecodeOutput" class="chain-decode-output"></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <p v-if="!savedChains().length && !savedCycles().length" class="chain-manager-empty">
+                                    No recipes yet. A recipe applies staged transforms to your whole input; a
+                                    cycle rotates several recipes across successive words. Both appear as
+                                    buttons on this page under <strong>chains</strong> once saved.
+                                </p>
+                            </div>
+                        </div>
+
                         <div class="transform-categories">
                             <!-- Favorites Section -->
                             <div 
@@ -117,10 +313,10 @@
                                     <template v-for="item in getFilteredFavoriteDisplayItems()" :key="item.key">
                                         <div v-if="item.type === 'transform'" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(item.transform, $event)"
+                                                @click="selectOrApplyTransform(item.transform, $event)"
                                                 :class="'transform-button transform-category-' + getDisplayCategory(item.transform.name)"
-                                                :class="{ active: activeTransform === item.transform }"
-                                                :title="'Click to transform and copy: ' + item.transform.name"
+                                                :class="{ active: isTransformSelected(item.transform) }"
+                                                :title="'Select or apply: ' + item.transform.name"
                                             >
                                                 <span class="transform-button-name">{{ item.transform.name }}</span>
                                                 <small class="transform-preview" v-if="transformInput">
@@ -204,10 +400,10 @@
                                     <template v-for="item in getFilteredLastUsedDisplayItems()" :key="item.key">
                                         <div v-if="item.type === 'transform'" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(item.transform, $event)"
+                                                @click="selectOrApplyTransform(item.transform, $event)"
                                                 :class="'transform-button transform-category-' + getDisplayCategory(item.transform.name)"
-                                                :class="{ active: activeTransform === item.transform }"
-                                                :title="'Click to transform and copy: ' + item.transform.name"
+                                                :class="{ active: isTransformSelected(item.transform) }"
+                                                :title="'Select or apply: ' + item.transform.name"
                                             >
                                                 <span class="transform-button-name">{{ item.transform.name }}</span>
                                                 <small class="transform-preview" v-if="transformInput">
@@ -454,9 +650,9 @@
                                     <div class="transform-buttons">
                                         <div v-for="transform in getFilteredTransformsByCategory(category)" :key="getTransformKey(transform)" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(transform, $event)"
+                                                @click="selectOrApplyTransform(transform, $event)"
                                                 :class="'transform-button transform-category-' + category + ' randomizer-button'"
-                                                :class="{ active: activeTransform === transform }"
+                                                :class="{ active: isTransformSelected(transform) }"
                                                 title="Click to apply random transforms to each word!"
                                             >
                                                 <i class="fas fa-wand-magic-sparkles"></i>
@@ -524,10 +720,10 @@
                                     <div class="transform-buttons">
                                         <div v-for="transform in getFilteredTransformsByCategory(category)" :key="getTransformKey(transform)" class="transform-button-group">
                                             <button 
-                                                @click="applyTransform(transform, $event)"
+                                                @click="selectOrApplyTransform(transform, $event)"
                                                 :class="'transform-button transform-category-' + category"
-                                                :class="{ active: activeTransform === transform }"
-                                                :title="'Click to transform and copy: ' + transform.name"
+                                                :class="{ active: isTransformSelected(transform) }"
+                                                :title="'Select or apply: ' + transform.name"
                                             >
                                                 <span class="transform-button-name">{{ transform.name }}</span>
                                                 <small class="transform-preview" v-if="transformInput">
@@ -576,28 +772,6 @@
                         </div>
                     </div>
 
-                    <div class="output-section" v-if="transformOutput">
-                        <div class="output-heading">
-                            <h4>
-                                <i class="fas fa-check-circle"></i> 
-                                Transformed Message
-                                <small v-if="activeTransform">({{ activeTransform.name }})</small>
-                            </h4>
-                        </div>
-                        <div class="output-container" :class="{ 'signwriting-output': activeTransform && activeTransform.category === 'signwriting' }">
-                            <textarea 
-                                readonly 
-                                v-model="transformOutput"
-                                aria-label="Transformed text output"
-                            ></textarea>
-                            <button class="copy-button" @click="copyToClipboard(transformOutput)" title="Copy to clipboard">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                        </div>
-                        <div class="output-instructions">
-                            <small><i class="fas fa-info-circle"></i> Copy this text and share it. Use the Decoder tab to reverse transformations.</small>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Native <template> keeps children out of the layout until Vue runs (no modal flash on load). -->
@@ -686,6 +860,395 @@
                                 Cancel
                             </button>
                             <button type="button" class="transform-options-btn transform-options-btn-primary" @click="commitTransformOptions">
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                    </div>
+                </template>
+
+                <!-- Chain / cycle builder -->
+                <template v-if="chainBuilderOpen">
+                    <div class="transform-options-backdrop chain-builder-backdrop" @click.self="closeChainBuilder">
+                    <div
+                        class="transform-options-panel chain-builder-panel"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="chain-builder-title"
+                        @click.stop
+                    >
+                        <div class="transform-options-panel-header">
+                            <h3 id="chain-builder-title">
+                                {{ chainBuilderEditId ? 'Edit' : 'New' }}
+                                {{ chainBuilderKind === 'cycle' ? 'per-word cycle' : (recipeBuilderMode === 'staged' ? 'recipe' : 'free-form chain') }}
+                            </h3>
+                            <button type="button" class="transform-options-close" @click="closeChainBuilder" title="Close" aria-label="Close">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <div class="transform-options-panel-body chain-builder-body">
+                            <!-- Default staged recipe builder -->
+                            <template v-if="chainBuilderKind === 'chain' && recipeBuilderMode === 'staged'">
+                                <label class="transform-options-field">
+                                    Name
+                                    <input type="text" v-model="stagedDraft.name" class="transform-options-text" placeholder="e.g. Latin cipher carrier" autocomplete="off" />
+                                </label>
+
+                                <div class="recipe-template-section">
+                                    <span class="recipe-section-label">Start from a template</span>
+                                    <div class="recipe-template-chips" role="group" aria-label="Recipe templates">
+                                        <button
+                                            v-for="template in recipeTemplates()"
+                                            :key="template.id"
+                                            type="button"
+                                            class="category-chip recipe-template-chip"
+                                            :class="{ 'active-filter': recipeTemplateId === template.id }"
+                                            @click="applyRecipeTemplate(template.id)"
+                                        >
+                                            {{ template.name }}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="recipe-stage-rail">
+                                    <section
+                                        v-for="(stageId, stageIndex) in recipeStageOrder()"
+                                        :key="stageId"
+                                        class="recipe-stage"
+                                        :class="{ 'recipe-stage-required': stageId === 'obfuscate' }"
+                                    >
+                                        <header class="recipe-stage-header">
+                                            <span class="chain-node-index">{{ stageIndex + 1 }}</span>
+                                            <div>
+                                                <strong>{{ recipeStageLabel(stageId) }}</strong>
+                                                <small>Optional</small>
+                                            </div>
+                                        </header>
+
+                                        <template v-if="stageId === 'translate'">
+                                            <button
+                                                v-if="!stagedDraft.stages.translate"
+                                                type="button"
+                                                class="recipe-stage-add"
+                                                @click="stagedSetTranslateEnabled(true)"
+                                            >
+                                                <i class="fas fa-plus"></i> Add Translate
+                                            </button>
+                                            <div v-else class="recipe-special-stage">
+                                                <label class="transform-options-field">
+                                                    Language
+                                                    <select v-model="stagedDraft.stages.translate.lang" class="transform-options-select" @change="clearRecipeTemplateSelection">
+                                                        <optgroup label="Major languages">
+                                                            <option v-for="lang in translateMainLangs" :key="lang.code" :value="lang.code">{{ lang.name }}</option>
+                                                        </optgroup>
+                                                        <optgroup label="Dead &amp; exotic">
+                                                            <option v-for="lang in translateExoticLangs" :key="lang.code" :value="lang.code">{{ lang.name }}</option>
+                                                        </optgroup>
+                                                        <optgroup v-if="translateCustomLangs.length" label="Custom">
+                                                            <option v-for="lang in translateCustomLangs" :key="lang.name" :value="lang.name">{{ lang.name }}</option>
+                                                        </optgroup>
+                                                    </select>
+                                                </label>
+                                                <openrouter-model-select v-model="stagedDraft.stages.translate.model" label="Translation model" @input="clearRecipeTemplateSelection"></openrouter-model-select>
+                                                <span class="chain-badge chain-badge-ai-only">AI / not mechanically reversible</span>
+                                                <button type="button" class="recipe-stage-remove" @click="stagedSetTranslateEnabled(false)">Remove Translate</button>
+                                            </div>
+                                        </template>
+
+                                        <template v-else-if="stageId === 'carrier'">
+                                            <div class="recipe-carrier-options">
+                                                <label><input type="radio" name="recipe-carrier" :checked="!stagedDraft.stages.carrier" @change="stagedSetCarrier('')" /> None</label>
+                                                <label><input type="radio" name="recipe-carrier" value="qr" :checked="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'qr'" @change="stagedSetCarrier('qr')" /> QR</label>
+                                                <label><input type="radio" name="recipe-carrier" value="emoji_stego" :checked="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" @change="stagedSetCarrier('emoji_stego')" /> Emoji stego</label>
+                                            </div>
+                                            <div v-if="stagedDraft.stages.carrier && stagedDraft.stages.carrier.type === 'emoji_stego'" class="recipe-carrier-picker carrier-quick-grid">
+                                                <span class="recipe-section-label">Carrier emoji</span>
+                                                <div class="emoji-grid" role="group" aria-label="Quick carrier emoji choices">
+                                                    <button
+                                                        v-for="carrier in recipeCarrierChoices().slice(0, 10)"
+                                                        :key="carrier.emoji"
+                                                        type="button"
+                                                        class="emoji-button"
+                                                        :class="{ selected: stagedDraft.stages.carrier.options.carrierEmoji === carrier.emoji }"
+                                                        :title="'Use ' + carrier.name"
+                                                        :aria-label="'Use ' + carrier.name + ' carrier'"
+                                                        @click="stagedSetCarrierEmoji(carrier.emoji)"
+                                                    >
+                                                        {{ carrier.emoji }}
+                                                    </button>
+                                                </div>
+                                                <label class="transform-options-field">
+                                                    All carriers
+                                                    <select
+                                                        class="transform-options-select recipe-emoji-input"
+                                                        :value="stagedDraft.stages.carrier.options.carrierEmoji"
+                                                        aria-label="Emoji steganography carrier"
+                                                        @change="stagedSetCarrierEmoji($event.target.value)"
+                                                    >
+                                                        <option v-for="carrier in recipeCarrierChoices()" :key="carrier.emoji" :value="carrier.emoji">
+                                                            {{ carrier.emoji }} {{ carrier.name }}
+                                                        </option>
+                                                    </select>
+                                                </label>
+                                            </div>
+                                        </template>
+
+                                        <template v-else>
+                                            <div v-if="stagedStageNodes(stageId).length" class="recipe-stage-nodes">
+                                                <div v-for="(node, nodeIndex) in stagedStageNodes(stageId)" :key="nodeIndex" class="chain-node-item">
+                                                    <div class="chain-node-row">
+                                                        <span class="chain-node-name">{{ chainNodeName(node) }}</span>
+                                                        <span class="chain-node-controls">
+                                                            <button type="button" class="chain-action-btn" :disabled="nodeIndex === 0" @click="stagedMoveNode(stageId, nodeIndex, -1)" title="Move up">
+                                                                <i class="fas fa-arrow-up"></i>
+                                                            </button>
+                                                            <button type="button" class="chain-action-btn" :disabled="nodeIndex === stagedStageNodes(stageId).length - 1" @click="stagedMoveNode(stageId, nodeIndex, 1)" title="Move down">
+                                                                <i class="fas fa-arrow-down"></i>
+                                                            </button>
+                                                            <button v-if="chainNodeOptionFields(node).length" type="button" class="chain-action-btn" @click="stagedToggleNodeOptions(stageId, nodeIndex)" title="Options">
+                                                                <i class="fas fa-gear"></i>
+                                                            </button>
+                                                            <button type="button" class="chain-action-btn chain-action-btn-danger" @click="stagedRemoveNode(stageId, nodeIndex)" title="Remove">
+                                                                <i class="fas fa-times"></i>
+                                                            </button>
+                                                        </span>
+                                                    </div>
+                                                    <div v-if="stagedNodeOptionsOpen(stageId, nodeIndex)" class="chain-node-options">
+                                                        <div v-for="opt in chainNodeOptionFields(node)" :key="opt.id" class="transform-options-field">
+                                                            <label :for="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id">{{ opt.label }}</label>
+                                                            <input v-if="opt.type === 'boolean'" :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" type="checkbox" class="transform-options-checkbox" :checked="node.options[opt.id]" @change="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.checked)" />
+                                                            <select v-else-if="opt.type === 'select'" :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" class="transform-options-select" :value="node.options[opt.id]" @change="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.value)">
+                                                                <option v-for="choice in opt.options" :key="String(choice.value)" :value="choice.value">{{ choice.label }}</option>
+                                                            </select>
+                                                            <input v-else-if="opt.type === 'number'" :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" type="number" class="transform-options-number" :value="node.options[opt.id]" :min="opt.min != null ? opt.min : null" :max="opt.max != null ? opt.max : null" :step="opt.step != null ? opt.step : 1" @input="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.value === '' ? opt.default : Number($event.target.value))" />
+                                                            <input v-else :id="'recipe-opt-' + stageId + '-' + nodeIndex + '-' + opt.id" type="text" class="transform-options-text" :value="node.options[opt.id]" @input="stagedSetNodeOption(stageId, nodeIndex, opt.id, $event.target.value)" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <button type="button" class="recipe-stage-add" @click="stagedTogglePicker(stageId)">
+                                                <i class="fas" :class="stagedPickerStage === stageId ? 'fa-minus' : 'fa-plus'"></i>
+                                                {{ stagedStageNodes(stageId).length ? 'Add another' : 'Add ' + recipeStageLabel(stageId) }}
+                                            </button>
+                                            <div v-if="stagedPickerStage === stageId" class="chain-node-picker recipe-stage-picker">
+                                                <input type="search" v-model="stagedPickerQuery" :placeholder="'Search ' + recipeStageLabel(stageId).toLowerCase() + ' transforms...'" :aria-label="'Search transforms for ' + recipeStageLabel(stageId) + ' stage'" autocomplete="off" spellcheck="false" />
+                                                <div class="chain-node-picker-results">
+                                                    <button v-for="candidate in stagedNodeCandidates(stageId)" :key="candidate.key" type="button" class="chain-node-picker-result" @click="stagedAddNode(stageId, candidate.key)">
+                                                        <i class="fas fa-plus"></i> {{ candidate.name }}
+                                                        <small>{{ candidate.category }}</small>
+                                                    </button>
+                                                    <small v-if="!stagedNodeCandidates(stageId).length" class="chain-manager-hint">No allowed transforms match.</small>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </section>
+                                </div>
+                            </template>
+
+                            <!-- LEGACY_FREEFORM_BUILDER: unrestricted ordered transform list -->
+                            <template v-else-if="chainBuilderKind === 'chain'">
+                                <p class="recipe-legacy-notice">
+                                    <span class="chain-badge chain-badge-legacy">Legacy</span>
+                                    Free-form chains ignore stage rules and may be removed in a future version.
+                                </p>
+                                <label class="transform-options-field">
+                                    Name
+                                    <input type="text" v-model="chainDraftName" class="transform-options-text" placeholder="e.g. ROT13 then Base64" autocomplete="off" />
+                                </label>
+
+                                <div class="chain-node-list">
+                                    <div v-for="(node, index) in chainDraftNodes" :key="index" class="chain-node-item">
+                                        <div class="chain-node-row">
+                                            <span class="chain-node-index">{{ index + 1 }}</span>
+                                            <span class="chain-node-name">{{ chainNodeName(node) }}</span>
+                                            <span class="chain-node-controls">
+                                                <button type="button" class="chain-action-btn" :disabled="index === 0" @click="chainMoveNode(index, -1)" title="Move up">
+                                                    <i class="fas fa-arrow-up"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn" :disabled="index === chainDraftNodes.length - 1" @click="chainMoveNode(index, 1)" title="Move down">
+                                                    <i class="fas fa-arrow-down"></i>
+                                                </button>
+                                                <button
+                                                    v-if="chainNodeOptionFields(node).length"
+                                                    type="button"
+                                                    class="chain-action-btn"
+                                                    @click="chainToggleNodeOptions(index)"
+                                                    title="Options"
+                                                >
+                                                    <i class="fas fa-gear"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn chain-action-btn-danger" @click="chainRemoveNode(index)" title="Remove">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </span>
+                                        </div>
+                                        <div v-if="chainOpenNodeOptionsIndex === index" class="chain-node-options">
+                                            <div v-for="opt in chainNodeOptionFields(node)" :key="opt.id" class="transform-options-field">
+                                                <label :for="'chain-opt-' + index + '-' + opt.id">{{ opt.label }}</label>
+                                                <template v-if="opt.type === 'boolean'">
+                                                    <input
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        type="checkbox"
+                                                        class="transform-options-checkbox"
+                                                        :checked="node.options[opt.id]"
+                                                        @change="chainSetNodeOption(index, opt.id, $event.target.checked)"
+                                                    />
+                                                </template>
+                                                <template v-else-if="opt.type === 'select'">
+                                                    <select
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        class="transform-options-select"
+                                                        :value="node.options[opt.id]"
+                                                        @change="chainSetNodeOption(index, opt.id, $event.target.value)"
+                                                    >
+                                                        <option v-for="choice in opt.options" :key="String(choice.value)" :value="choice.value">
+                                                            {{ choice.label }}
+                                                        </option>
+                                                    </select>
+                                                </template>
+                                                <template v-else-if="opt.type === 'text'">
+                                                    <input
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        type="text"
+                                                        class="transform-options-text"
+                                                        :value="node.options[opt.id]"
+                                                        autocomplete="off"
+                                                        @input="chainSetNodeOption(index, opt.id, $event.target.value)"
+                                                    />
+                                                </template>
+                                                <template v-else-if="opt.type === 'number'">
+                                                    <input
+                                                        :id="'chain-opt-' + index + '-' + opt.id"
+                                                        type="number"
+                                                        class="transform-options-number"
+                                                        :value="node.options[opt.id]"
+                                                        :min="opt.min != null ? opt.min : null"
+                                                        :max="opt.max != null ? opt.max : null"
+                                                        :step="opt.step != null ? opt.step : 1"
+                                                        @input="chainSetNodeOption(index, opt.id, $event.target.value === '' ? opt.default : Number($event.target.value))"
+                                                    />
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p v-if="!chainDraftNodes.length" class="chain-manager-empty">No transforms added yet.</p>
+                                </div>
+
+                                <div class="chain-node-picker">
+                                    <input
+                                        type="search"
+                                        v-model="chainNodePickerQuery"
+                                        placeholder="Search transforms to add..."
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                    />
+                                    <div class="chain-node-picker-results">
+                                        <button
+                                            v-for="candidate in chainNodeCandidates()"
+                                            :key="candidate.key"
+                                            type="button"
+                                            class="chain-node-picker-result"
+                                            @click="chainAddNode(candidate.key)"
+                                        >
+                                            <i class="fas fa-plus"></i> {{ candidate.name }}
+                                            <small>{{ candidate.category }}</small>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div v-if="chainDraftNodes.length" class="chain-preview">
+                                    <h5>Preview</h5>
+                                    <div v-for="(step, i) in chainDraftPreviewSteps()" :key="i" class="chain-preview-step">
+                                        <small>{{ step.name }}</small>
+                                        <code v-if="!step.error">{{ step.after }}</code>
+                                        <code v-else class="chain-preview-error">{{ step.error }}</code>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Cycle builder: ordered list of chain references, rotated per word -->
+                            <template v-else>
+                                <label class="transform-options-field">
+                                    Name
+                                    <input type="text" v-model="cycleDraftName" class="transform-options-text" placeholder="e.g. Alternate Base64 / Caesar" autocomplete="off" />
+                                </label>
+                                <label class="recipe-cycle-mode">
+                                    <input
+                                        type="checkbox"
+                                        v-model="cycleDraftMode"
+                                        true-value="one_way"
+                                        false-value="word_safe"
+                                    />
+                                    <span>
+                                        <strong>One-way / AI-decode</strong>
+                                        <small>Allows recipes that are not word-safe. Leave off for reversible word-safe cycles.</small>
+                                    </span>
+                                </label>
+
+                                <div class="chain-node-list">
+                                    <div v-for="(chainId, index) in cycleDraftChainIds" :key="index" class="chain-node-item">
+                                        <div class="chain-node-row">
+                                            <span class="chain-node-index">{{ index + 1 }}</span>
+                                            <span class="chain-node-name">{{ cycleChainName(chainId) }}</span>
+                                            <span v-if="cycleDraftMode === 'word_safe' && !cycleChainIsWordSafe(chainId)" class="chain-badge chain-badge-ai-only">
+                                                Not word-safe
+                                            </span>
+                                            <span class="chain-node-controls">
+                                                <button type="button" class="chain-action-btn" :disabled="index === 0" @click="cycleMoveChainRef(index, -1)" title="Move up">
+                                                    <i class="fas fa-arrow-up"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn" :disabled="index === cycleDraftChainIds.length - 1" @click="cycleMoveChainRef(index, 1)" title="Move down">
+                                                    <i class="fas fa-arrow-down"></i>
+                                                </button>
+                                                <button type="button" class="chain-action-btn chain-action-btn-danger" @click="cycleRemoveChainRef(index)" title="Remove">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <p v-if="!cycleDraftChainIds.length" class="chain-manager-empty">
+                                        Word 1 uses the first chain below, word 2 the second, and so on — wrapping
+                                        around once every chain has been used.
+                                    </p>
+                                </div>
+
+                                <label class="transform-options-field">
+                                    Add chain to rotation
+                                    <select class="transform-options-select" @change="cycleAddChainRef($event.target.value); $event.target.value = ''">
+                                        <option value="">Select a chain…</option>
+                                        <option
+                                            v-for="chain in savedChains()"
+                                            :key="chain.id"
+                                            :value="chain.id"
+                                            :disabled="cycleDraftMode === 'word_safe' && !cycleRecipeIsWordSafe(chain)"
+                                        >
+                                            {{ chain.name }}{{ cycleDraftMode === 'word_safe' && !cycleRecipeIsWordSafe(chain) ? ' — not word-safe' : '' }}
+                                        </option>
+                                    </select>
+                                </label>
+
+                                <div v-if="cycleDraftChainIds.length" class="chain-preview">
+                                    <h5>Preview</h5>
+                                    <code>{{ cycleDraftPreview() }}</code>
+                                </div>
+                            </template>
+
+                            <p v-if="chainBuilderError" class="chain-decode-error">{{ chainBuilderError }}</p>
+                            <p v-else-if="recipeBuilderMode === 'staged' && chainBuilderKind !== 'cycle'" class="chain-manager-hint">
+                                Recipes need at least two steps — any mix of stages is fine.
+                            </p>
+                        </div>
+
+                        <div class="transform-options-panel-actions">
+                            <button type="button" class="transform-options-btn transform-options-btn-secondary" @click="closeChainBuilder">
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="transform-options-btn transform-options-btn-primary"
+                                @click="chainBuilderKind === 'cycle' ? saveCycleDraft() : (recipeBuilderMode === 'staged' ? saveStagedRecipe() : saveChainDraft())"
+                            >
                                 Save
                             </button>
                         </div>

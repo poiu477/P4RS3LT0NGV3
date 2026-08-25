@@ -4,7 +4,7 @@ A powerful web-based text transformation and steganography tool with **222** bui
 
 **Version 4.0** brings a redesigned desktop app shell, seven themes (including WCAG 2.1 AA **Accessible**), mobile utility panels, OpenRouter model curation, and responsive UI polish across all tools.
 
-The app is a **static site**: run **`npm run build`** (after `npm install`), then open **`dist/index.html`** in your browser—no local server required. **Alternatively**, you can run it as a local app over HTTP with **`npm start`** or **`npx serve dist -l 8080`** (see [Getting Started](#getting-started) below). Core transforms, decoder, and steganography work **without** calling the cloud; the AI-assisted features work with **any supported provider** — [OpenRouter](https://openrouter.ai/), OpenAI, Anthropic, Google Gemini, [audn.ai](https://audn.ai/), or any OpenAI-compatible custom endpoint — and need **network access** plus an API key for at least one provider (see [AI Providers & API Keys](#ai-providers--api-keys) below).
+The app is a **static site**: run **`npm run build`** (after `npm install`), then open **`dist/index.html`** in your browser—no local server required. **Alternatively**, you can run it as a local app over HTTP with **`npm start`** or **`npx serve dist -l 8080`** (see [Getting Started](#-getting-started) below). Core transforms, decoder, and steganography work **without** calling the cloud; the AI-assisted features work with **any supported provider** — [OpenRouter](https://openrouter.ai/), OpenAI, Anthropic, Google Gemini, [audn.ai](https://audn.ai/), or any OpenAI-compatible custom endpoint — and need **network access** plus an API key for at least one provider (see [AI Providers & API Keys](#-ai-providers--api-keys) below).
 
 ## ✨ Features
 
@@ -258,7 +258,7 @@ Categories match the Transform tab and the folders under `src/transformers/` (ea
 
 ### 🛠️ **Tools** (tabs)
 
-Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider** you've configured in **Advanced Settings** — you can pick any model across every provider you've added a key for — see [AI Providers & API Keys](#ai-providers--api-keys) below.
+Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider** you've configured in **Advanced Settings** — you can pick any model across every provider you've added a key for — see [AI Providers & API Keys](#-ai-providers--api-keys) below.
 
 ### 🔤 **Transform**
 
@@ -267,6 +267,21 @@ Tabs appear in **UI order** below. AI-backed tools use whichever **AI provider**
 - **Favorites & last used**: Pin transforms and recall recent picks.
 - **Per-transform options**: Gear icon where a transform exposes settings.
 - **Keyboard shortcut**: **T** (shown in the tab title).
+- **Encode / Decode** toggle above the input: every transform and saved recipe runs in that mode. Results show in the Output field under the input and are copied to the clipboard (Copy History). Irreversible methods use AI decode when Decode is selected.
+
+### Recipes & Cycles (on the Transform tab)
+
+- **Recipe** — a typed, whole-input pipeline arranged on the fixed rail **Normalize → Translate → Obfuscate → Present → Conceal → Carrier**. Obfuscate requires at least one step; the other stages are optional, and each transform picker only offers transforms suited to that stage.
+- **Templates** — **Cipher → Base64**, **Translate → Theban**, and **Cipher → Base64 → QR** are editable shortcuts that prefill the same staged recipe builder; they are not separate execution modes.
+- **Translate** — optionally runs through your configured AI provider and model. Recipes that include it show an AI badge and require a working provider key when applied.
+- **Carriers** — optionally wrap the final result as a QR image or emoji-steganography text. Carrier is always terminal; QR output is shown as an image preview.
+- **Free-form (legacy)** — the original unrestricted whole-input chain builder remains available as an escape hatch and existing `transform-chains-v1` saves continue to load.
+- **Cycle** — rotates saved recipes across words (word 1 → recipe A, word 2 → recipe B, wrap). The default **word-safe** mode rejects recipes such as Base64, Translate, or Carrier pipelines that cannot safely operate and reverse one word at a time. Enable **one-way** to allow them; that cycle is not mechanically decodable and is marked for AI decode.
+- Saved recipes and cycles appear under the **chains** category like ordinary transforms (search, favorites, click-to-apply). Nested recipes/cycles are not allowed.
+- If a recipe cannot mechanically reverse, click it with **Decode** selected to run AI decode inline (uses your configured AI providers). The manager's AI decode panel is a secondary tool for testing a recipe/cycle without leaving the builder.
+- Export/import JSON from the manager; copy the human-readable recipe for sharing.
+
+> **Future B:** Opaque-token cycles—preserving word boundaries by wrapping arbitrary recipe output in tokens—are a possible future design, not part of the current cycle modes.
 
 ### 🌐 **AI Translation** (AI-powered)
 

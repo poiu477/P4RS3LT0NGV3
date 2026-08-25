@@ -79,6 +79,45 @@ Example: Transform Tool, Decoder Tool, Emoji Tool
 ### Tools with Dynamic Content
 - ✅ Splitter Tool - Self-contained in SplitterTool.js
 
+## Transform recipes, legacy chains & cycles
+
+The Transform tab keeps recipe composition in the existing Chains manager; it does not add another tool tab.
+
+### Staged recipe model
+
+- Taxonomy: `js/core/transformRecipeStages.js` (`window.TransformRecipeStages`)
+- Runtime and persistence: `js/core/transformChains.js` (`window.TransformChains`)
+- Schema: `{ kind: 'staged', stages: { normalize, translate, obfuscate, present, conceal, carrier } }`
+- Fixed execution rail: **Normalize → Translate → Obfuscate → Present → Conceal → Carrier**
+- `obfuscate` is a required array with at least one node. Normalize, Present, and Conceal are optional transform arrays; Translate and Carrier are optional typed singleton nodes.
+- Stage transform pickers and validation use category allowlists plus explicit allow/deny keys. Saved chains and cycles cannot be nested as stage nodes.
+- `TransformRecipeStages.TEMPLATES` supplies editable builder presets. Templates only prefill ordinary staged records; they do not introduce another persisted kind or runner.
+
+Transform-backed stages run synchronously in rail order. A Translate node uses the configured AI provider/model asynchronously. A terminal Carrier node runs last and returns either text (`emoji_stego`) or an image data URL (`qr`); the Transform tool renders QR results as an image preview.
+
+### Persistence and registration
+
+- Storage remains at `localStorage` keys `transform-chains-v1` and `transform-cycles-v1`; upgrades do not wipe either v1 key.
+- Staged recipes and free-form chains share `transform-chains-v1`. Staged records keep `kind: 'staged'` and `stages`; old node-list records are normalized to `kind: 'freeform'`.
+- The unrestricted **Free-form (legacy)** builder and `saveChain` path remain available behind explicit `LEGACY_FREEFORM_*` / `@legacy` markers for compatibility and possible later removal.
+- Registration uses `chain_<id>` / `cycle_<id>` on `window.transforms`, category `chains`.
+- Mechanical reverse is available only when every relevant node supports it; otherwise the manager offers AI recipe decode through `aiDecode`.
+- UI: `templates/transforms.html`, with builder and apply/preview methods on `TransformTool`.
+
+### Encode / Decode apply mode
+
+- Mode helpers: `js/core/transformApplyMode.js` (`window.TransformApplyMode`); persisted in `localStorage` key `transform-encode-decode-mode` (default `encode`).
+- UI: segmented **Encode | Decode** switch above the input in `templates/transforms.html`; Output field sits directly under Input.
+- Click path: registered transforms and saved recipes/cycles share `TransformTool.applyTransform` → `applyActiveTransformOutput({ copyOnSuccess: true })`. `TransformApplyMode.resolveAction` picks `encode`, mechanical `reverse`, or `ai_decode` (irreversible decode → `TransformChains.aiDecode` with `describeForAiDecode`).
+- Destinations: text always in Output; image carriers (e.g. QR) preview in Output with underlying text when present; explicit apply/click also copies text to clipboard (Copy History). Live `@input` auto-transform updates Output only (no clipboard).
+- Manager **Apply** on recipe list is demoted; chains run like other transform tiles via the shared click path.
+
+### Cycle modes
+
+- `word_safe` is the default, including for records saved before cycle modes existed. Validation rejects recipes that are unsafe per word, including Base64-like transforms and staged Translate or Carrier nodes, and registration keeps mechanical reverse only after its round-trip probe succeeds.
+- `one_way` permits those recipes, but registers the cycle with `canDecode: false` and no mechanical `reverse`; the UI marks it for AI decode.
+- **Future B (documented only):** opaque-token cycles could preserve word boundaries around arbitrary recipe output. No opaque-token schema, execution path, or UI exists today.
+
 ## Adding a New Tool
 
 ### Step 1: Create Tool Class

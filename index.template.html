@@ -358,6 +358,7 @@
                                             :type="aiRevealedKeys[p.id] ? 'text' : 'password'"
                                             v-model="aiKeyDrafts[p.id]"
                                             :placeholder="p.keyPlaceholder || 'API key'"
+                                            :aria-label="(p.name || 'Provider') + ' API key'"
                                             class="api-key-input"
                                             autocomplete="off"
                                             spellcheck="false"
@@ -544,6 +545,9 @@
     <script src="js/bundles/transforms-bundle.js"></script>
     <script src="js/core/spellingAlphabetTransform.js"></script>
     <script src="js/core/customSpellingAlphabets.js"></script>
+    <script src="js/core/transformApplyMode.js"></script>
+    <script src="js/core/transformRecipeStages.js"></script>
+    <script src="js/core/transformChains.js"></script>
     
     <!-- Glitch Tokens Data -->
     <script src="js/data/glitchTokens.js"></script>

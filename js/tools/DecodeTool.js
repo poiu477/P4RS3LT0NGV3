@@ -127,7 +127,9 @@ class DecodeTool extends Tool {
             selectedDecoder: 'auto',
             decoderLangDetected: null,
             decoderTranslating: false,
-            decoderTranslateError: ''
+            decoderTranslateError: '',
+            decoderAutoTranslateTimer: null,
+            decoderAutoTranslateGen: 0
         };
     }
 
@@ -139,10 +141,40 @@ class DecodeTool extends Tool {
                     ? transformSelectFilter(this, true)
                     : this.transforms.filter(t => t && typeof t.reverse === 'function');
             },
+            decoderHasAiConfigured: function() {
+                if (!window.AIProvider) return false;
+                if (typeof window.AIProvider.getConfiguredProviders === 'function') {
+                    return window.AIProvider.getConfiguredProviders().length > 0;
+                }
+                var model = localStorage.getItem('translate-model') || 'google/gemma-3-27b-it';
+                return !!window.AIProvider.keyForModel(model);
+            },
+            scheduleDecoderAutoTranslate: function() {
+                var vm = this;
+                if (vm.decoderAutoTranslateTimer) {
+                    clearTimeout(vm.decoderAutoTranslateTimer);
+                    vm.decoderAutoTranslateTimer = null;
+                }
+                if (!vm.decoderLangDetected || !vm.decoderHasAiConfigured()) {
+                    return;
+                }
+                var generation = ++vm.decoderAutoTranslateGen;
+                vm.decoderAutoTranslateTimer = setTimeout(function() {
+                    vm.decoderAutoTranslateTimer = null;
+                    if (generation !== vm.decoderAutoTranslateGen) return;
+                    if (!vm.decoderLangDetected || vm.decoderTranslating) return;
+                    vm.decoderTranslateToEnglish({ auto: true });
+                }, 450);
+            },
             runUniversalDecode: function() {
                 const input = this.decoderInput;
                 this.decoderLangDetected = null;
                 this.decoderTranslateError = '';
+                if (this.decoderAutoTranslateTimer) {
+                    clearTimeout(this.decoderAutoTranslateTimer);
+                    this.decoderAutoTranslateTimer = null;
+                }
+                this.decoderAutoTranslateGen += 1;
 
                 if (!input) {
                     this.decoderOutput = '';
@@ -184,18 +216,23 @@ class DecodeTool extends Tool {
                 this.decoderResult = result;
                 this.decoderOutput = result ? result.text : '';
 
-                // Run language detection on the input (and on decoded output if different)
-                var langDetect = self.detectLanguage(input);
+                // Prefer language on the mechanically decoded text — that is what
+                // remains after undoing circling/ciphers and what we must translate.
+                var langDetect = null;
+                if (result && result.text) {
+                    langDetect = self.detectLanguage(result.text);
+                }
+                if (!langDetect) {
+                    langDetect = self.detectLanguage(input);
+                }
+                this.decoderLangDetected = langDetect;
+
                 if (langDetect) {
-                    this.decoderLangDetected = langDetect;
-                } else if (result && result.text && result.text !== input) {
-                    var decodedLang = self.detectLanguage(result.text);
-                    if (decodedLang) {
-                        this.decoderLangDetected = decodedLang;
-                    }
+                    this.scheduleDecoderAutoTranslate();
                 }
             },
-            decoderTranslateToEnglish: async function() {
+            decoderTranslateToEnglish: async function(options) {
+                var auto = !!(options && options.auto);
                 var model = localStorage.getItem('translate-model') || 'google/gemma-3-27b-it';
                 var providerId = window.AIProvider.parseModelId(model).providerId;
                 var providerLabel = window.AIProvider.labelForModel(model);
@@ -210,8 +247,18 @@ class DecodeTool extends Tool {
                     return;
                 }
 
-                var textToTranslate = this.decoderInput;
+                // Translate the decoded plaintext when available. Using the raw
+                // input re-sends circled/ciphered text and skips undoing translation.
+                var textToTranslate = (this.decoderOutput && String(this.decoderOutput).trim())
+                    ? this.decoderOutput
+                    : this.decoderInput;
+                if (!textToTranslate || !String(textToTranslate).trim()) {
+                    return;
+                }
                 var lang = this.decoderLangDetected ? this.decoderLangDetected.language : 'Unknown';
+                var priorMethod = this.decoderResult && this.decoderResult.method
+                    ? this.decoderResult.method
+                    : '';
 
                 this.decoderTranslating = true;
                 this.decoderTranslateError = '';
@@ -241,10 +288,15 @@ class DecodeTool extends Tool {
                         this.decoderOutput = translated;
                         this.decoderResult = {
                             text: translated,
-                            method: lang + ' → English (AI)',
+                            method: priorMethod
+                                ? (priorMethod + ' → ' + lang + ' → English (AI)')
+                                : (lang + ' → English (AI)'),
                             alternatives: this.decoderResult ? this.decoderResult.alternatives || [] : []
                         };
-                        this.copyToClipboard(translated);
+                        if (!auto) {
+                            this.copyToClipboard(translated);
+                        }
+                        this.decoderLangDetected = null;
                     }
                 } catch (e) {
                     this.decoderTranslateError = 'Translation failed: ' + e.message;
@@ -260,6 +312,10 @@ class DecodeTool extends Tool {
                         text: alternative.text,
                         alternatives: this.decoderResult.alternatives.filter(a => a.method !== alternative.method)
                     };
+                    this.decoderLangDetected = self.detectLanguage(alternative.text);
+                    if (this.decoderLangDetected) {
+                        this.scheduleDecoderAutoTranslate();
+                    }
                 }
             }
         };

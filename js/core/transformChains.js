@@ -1,0 +1,1007 @@
+/**
+ * Transform Chains
+ *
+ * Fills the gap between applying a single transform and the all-random
+ * "Random Mix": an ordered, repeatable pipeline of transforms.
+ *
+ * Two saved entities, both registered into window.transforms so they show up
+ * on the Transforms page as ordinary buttons (same trick custom spelling
+ * alphabets use) and inherit search, favorites, and click-to-apply:
+ *
+ *   Chain — an ordered list of nodes applied in sequence to the whole text.
+ *           text → node1 → node2 → node3 → output
+ *
+ *   Cycle — a list of chains rotated across words. Word 1 gets the first
+ *           chain, word 2 the second, wrapping around at the end, so any
+ *           number of chains covers any number of words.
+ *           "alpha beta gamma delta" with chains [A, B]
+ *             → A(alpha) B(beta) A(gamma) B(delta)
+ *
+ * Each node snapshots its own options, so the same transform can appear twice
+ * in one chain with different settings (Caesar shift 3 then Caesar shift 7),
+ * and a chain's output doesn't drift when global option prefs change.
+ */
+(function(global) {
+    'use strict';
+
+    var CHAIN_STORAGE_KEY = 'transform-chains-v1';
+    var CYCLE_STORAGE_KEY = 'transform-cycles-v1';
+    var CHAIN_PREFIX = 'chain_';
+    var CYCLE_PREFIX = 'cycle_';
+    var CATEGORY = 'chains';
+    var lastMutationError = '';
+    var WORD_UNSAFE_KEYS = {
+        base64: true,
+        base64url: true
+    };
+
+    // ---- storage ----------------------------------------------------------
+
+    function isRecord(value) {
+        return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /** Structural check for a persisted node (transform key required). */
+    function isValidPersistedNode(node) {
+        return isRecord(node) && typeof node.transform === 'string' && node.transform.length > 0;
+    }
+
+    function sanitizeChainRecord(chain) {
+        if (!isRecord(chain)) return null;
+        if (typeof chain.id !== 'string' || !chain.id) return null;
+        if (typeof chain.name !== 'string') return null;
+        if (chain.kind === 'staged') {
+            if (!isRecord(chain.stages)) return null;
+            return Object.assign({}, chain, {
+                kind: 'staged',
+                stages: chain.stages
+            });
+        }
+        // @legacy free-form chain
+        if (!Array.isArray(chain.nodes)) return null;
+        return Object.assign({}, chain, {
+            kind: chain.kind || 'freeform',
+            nodes: chain.nodes.filter(isValidPersistedNode)
+        });
+    }
+
+    function sanitizeCycleRecord(cycle) {
+        if (!isRecord(cycle)) return null;
+        if (typeof cycle.id !== 'string' || !cycle.id) return null;
+        if (typeof cycle.name !== 'string') return null;
+        if (!Array.isArray(cycle.chainIds)) return null;
+        return Object.assign({}, cycle, {
+            mode: cycle.mode === 'one_way' ? 'one_way' : 'word_safe',
+            chainIds: cycle.chainIds.filter(function(id) {
+                return typeof id === 'string' && id.length > 0;
+            })
+        });
+    }
+
+    function readList(key) {
+        try {
+            var raw = global.localStorage.getItem(key);
+            if (!raw) return [];
+            var parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return [];
+            // Drop holes / explicit nulls before record sanitization.
+            return parsed.filter(function(item) { return item != null; });
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function writeList(key, list) {
+        try {
+            global.localStorage.setItem(key, JSON.stringify(list || []));
+            return true;
+        } catch (e) {
+            console.warn('Failed to save ' + key + ':', e);
+            return false;
+        }
+    }
+
+    function genId() {
+        if (global.crypto && global.crypto.randomUUID) {
+            return global.crypto.randomUUID().slice(0, 8);
+        }
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    }
+
+    function loadChains() {
+        return readList(CHAIN_STORAGE_KEY).map(sanitizeChainRecord).filter(Boolean);
+    }
+
+    function loadRecipes() {
+        return loadChains().filter(function(chain) { return chain.kind === 'staged'; });
+    }
+
+    function loadCycles() {
+        return readList(CYCLE_STORAGE_KEY).map(sanitizeCycleRecord).filter(Boolean);
+    }
+
+    // ---- node execution ---------------------------------------------------
+
+    function lookupTransform(key) {
+        return (global.transforms && global.transforms[key]) || null;
+    }
+
+    /** True when a transform key points at a saved chain or cycle registration. */
+    function isSavedTransformKey(key) {
+        return typeof key === 'string' &&
+            (key.indexOf(CHAIN_PREFIX) === 0 || key.indexOf(CYCLE_PREFIX) === 0);
+    }
+
+    /**
+     * A node is runnable only if its transform is still registered and is not a
+     * nested saved chain/cycle (those are unsupported — nesting would let
+     * runChainNodes recurse without a bound).
+     */
+    function nodeIsValid(node) {
+        if (!node || !node.transform) return false;
+        if (isSavedTransformKey(node.transform)) return false;
+        var t = lookupTransform(node.transform);
+        if (!t || t.isChain || t.isCycle) return false;
+        return true;
+    }
+
+    /**
+     * Reject self-references and any nested saved chain/cycle before persist.
+     * Returns an error string, or null when the graph is safe to save.
+     */
+    function validateChainForSave(chain) {
+        var nodes = (chain && chain.nodes) || [];
+        var selfKey = chain && chain.id ? (CHAIN_PREFIX + chain.id) : null;
+
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            if (!node || typeof node.transform !== 'string' || !node.transform) {
+                return 'Each chain node needs a transform key.';
+            }
+            if (selfKey && node.transform === selfKey) {
+                return 'A chain cannot reference itself.';
+            }
+            if (isSavedTransformKey(node.transform)) {
+                return 'Chains cannot nest other saved chains or cycles.';
+            }
+            var t = lookupTransform(node.transform);
+            if (t && (t.isChain || t.isCycle)) {
+                return 'Chains cannot nest other saved chains or cycles.';
+            }
+        }
+        return null;
+    }
+
+    function validateCycleForSave(cycle) {
+        if (!cycle || typeof cycle !== 'object') {
+            return 'Invalid cycle.';
+        }
+        if (typeof cycle.name !== 'string' || !cycle.name.trim()) {
+            return 'Cycle name is required.';
+        }
+        if (!Array.isArray(cycle.chainIds) || !cycle.chainIds.length) {
+            return 'Add at least one chain to the cycle.';
+        }
+        if (cycle.mode != null && cycle.mode !== 'word_safe' && cycle.mode !== 'one_way') {
+            return 'Cycle mode must be "word_safe" or "one_way".';
+        }
+        var known = Object.create(null);
+        loadChains().forEach(function(c) { known[c.id] = c; });
+        for (var i = 0; i < cycle.chainIds.length; i++) {
+            var cid = cycle.chainIds[i];
+            if (typeof cid !== 'string' || !cid) {
+                return 'Cycle contains an invalid chain reference.';
+            }
+            if (!known[cid]) {
+                return 'Cycle references a missing chain (' + cid + ').';
+            }
+            if (cycle.mode !== 'one_way' && !recipeIsWordSafe(known[cid])) {
+                return 'Cycle recipe "' + known[cid].name + '" is not word-safe. Use one_way mode instead.';
+            }
+        }
+        return null;
+    }
+
+    function nodeCanReverse(node) {
+        var t = lookupTransform(node && node.transform);
+        return !!(t && typeof t.reverse === 'function' && t.canDecode !== false);
+    }
+
+    function applyNode(node, text) {
+        var t = lookupTransform(node.transform);
+        if (!t) return text;
+        return t.func(text, node.options || {});
+    }
+
+    function reverseNode(node, text) {
+        var t = lookupTransform(node.transform);
+        if (!t || typeof t.reverse !== 'function') return text;
+        return t.reverse(text, node.options || {});
+    }
+
+    /** Run every node front-to-back. Missing transforms are skipped, not fatal. */
+    function runChainNodes(nodes, text) {
+        return (nodes || []).reduce(function(acc, node) {
+            if (!nodeIsValid(node)) return acc;
+            try {
+                return applyNode(node, acc);
+            } catch (e) {
+                console.warn('Chain node "' + node.transform + '" failed:', e);
+                return acc;
+            }
+        }, text);
+    }
+
+    /** Return every staged node in canonical flatten order. */
+    function getStagedNodes(recipe) {
+        var stagesApi = global.TransformRecipeStages;
+        if (!stagesApi || typeof stagesApi.flattenStagedToNodes !== 'function') return [];
+        return stagesApi.flattenStagedToNodes(recipe);
+    }
+
+    /** Return only transform-backed nodes for synchronous execution. */
+    function getStagedTransformNodes(recipe) {
+        return getStagedNodes(recipe).filter(function(n) {
+            return n && typeof n.transform === 'string';
+        });
+    }
+
+    function runStagedRecipeSync(recipe, text) {
+        return runChainNodes(getStagedTransformNodes(recipe), text);
+    }
+
+    function buildTranslatePrompt(langName, langCode, text) {
+        return 'You are a professional English (en) to ' + langName + ' (' + langCode + ') translator. ' +
+            'Your goal is to accurately convey the meaning and nuances of the original English text ' +
+            'while adhering to ' + langName + ' grammar, vocabulary, and cultural sensitivities. ' +
+            'Produce only the ' + langName + ' translation, without any additional explanations or commentary. ' +
+            'Please translate the following English text into ' + langName + ':\n\n' + text;
+    }
+
+    function runTranslateNode(node, text, opts) {
+        if (!global.AIProvider || typeof global.AIProvider.chatCompletion !== 'function') {
+            return Promise.reject(new Error('Configure an AI provider in Settings.'));
+        }
+        opts = opts || {};
+        var model = node.model || opts.model ||
+            global.localStorage.getItem('translate-model') || '';
+        var callOpts = Object.assign({}, opts, { model: model });
+        var stagesApi = global.TransformRecipeStages;
+        var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+            ? stagesApi.resolveTranslateLanguage(node.lang)
+            : { name: String(node.lang || ''), code: String(node.lang || '') };
+        return global.AIProvider.chatCompletion([
+            { role: 'user', content: buildTranslatePrompt(language.name, language.code, text) }
+        ], callOpts).then(function(data) {
+            var message = data && data.choices && data.choices[0] && data.choices[0].message;
+            return ((message && message.content) || '').trim();
+        });
+    }
+
+    function buildTranslateToEnglishPrompt(langName, langCode, text) {
+        return 'You are a professional ' + langName + ' (' + langCode + ') to English (en) translator. ' +
+            'Produce only the English translation, without any additional explanations or commentary. ' +
+            'Preserve punctuation and structure. Translate this ' + langName + ' text to English:\n\n' + text;
+    }
+
+    /** Undo a Translate stage: foreign language → English via AI. */
+    function runTranslateToEnglishNode(node, text, opts) {
+        if (!global.AIProvider || typeof global.AIProvider.chatCompletion !== 'function') {
+            return Promise.reject(new Error('Configure an AI provider in Settings.'));
+        }
+        opts = opts || {};
+        var model = node.model || opts.model ||
+            global.localStorage.getItem('translate-model') ||
+            global.localStorage.getItem('chain-decode-model') || '';
+        var callOpts = Object.assign({}, opts, { model: model });
+        var stagesApi = global.TransformRecipeStages;
+        var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+            ? stagesApi.resolveTranslateLanguage(node.lang)
+            : { name: String(node.lang || ''), code: String(node.lang || '') };
+        return global.AIProvider.chatCompletion([
+            { role: 'user', content: buildTranslateToEnglishPrompt(language.name, language.code, text) }
+        ], callOpts).then(function(data) {
+            var message = data && data.choices && data.choices[0] && data.choices[0].message;
+            return ((message && message.content) || '').trim();
+        });
+    }
+
+    function clampNumber(value, fallback, min, max) {
+        var number = Number(value);
+        if (!isFinite(number)) number = fallback;
+        return Math.max(min, Math.min(max, number));
+    }
+
+    /**
+     * Wrap transformed text in the recipe's final carrier.
+     * QR options mirror CodesTool; encodeEmoji uses its actual (emoji, text) signature.
+     */
+    function applyCarrier(carrierNode, text) {
+        if (!carrierNode) {
+            return Promise.resolve({ kind: 'text', value: String(text) });
+        }
+        var options = carrierNode.options || {};
+        if (carrierNode.type === 'qr') {
+            if (!global.QRCode || typeof global.QRCode.toDataURL !== 'function') {
+                return Promise.reject(new Error('QR library not loaded. Rebuild the app (npm run build).'));
+            }
+            var widthValue = options.width != null ? options.width : options.size;
+            var marginValue = options.margin != null ? options.margin : 2;
+            return global.QRCode.toDataURL(String(text), {
+                width: clampNumber(widthValue, 256, 128, 1024),
+                margin: clampNumber(marginValue, 2, 0, 20),
+                errorCorrectionLevel: options.errorCorrectionLevel || options.ecl || 'M'
+            }).then(function(dataUrl) {
+                return { kind: 'image', value: dataUrl, text: String(text) };
+            });
+        }
+        if (carrierNode.type === 'emoji_stego') {
+            if (!global.steganography || typeof global.steganography.encodeEmoji !== 'function') {
+                return Promise.reject(new Error('Emoji steganography library not loaded.'));
+            }
+            var carrierEmoji = options.carrierEmoji || options.carrier || carrierNode.carrierEmoji || '🐍';
+            return Promise.resolve().then(function() {
+                return {
+                    kind: 'text',
+                    value: global.steganography.encodeEmoji(carrierEmoji, String(text))
+                };
+            });
+        }
+        return Promise.reject(new Error('Unsupported carrier type: ' + carrierNode.type));
+    }
+
+    /** Walk every text stage in flatten order, then apply the final carrier. */
+    function runStagedRecipeAsync(recipe, text, opts) {
+        var stages = (recipe && recipe.stages) || {};
+        var carrierNode = stages.carrier || null;
+        var textNodes = getStagedNodes(recipe).filter(function(node) {
+            return node !== carrierNode;
+        });
+        return textNodes.reduce(function(pending, node) {
+            return pending.then(function(acc) {
+                if (node && node.type === 'translate') {
+                    return runTranslateNode(node, acc, opts);
+                }
+                if (node && typeof node.transform === 'string') {
+                    return runChainNodes([node], acc);
+                }
+                return acc;
+            });
+        }, Promise.resolve(text)).then(function(value) {
+            return applyCarrier(carrierNode, value);
+        });
+    }
+
+    /**
+     * Decode a staged recipe in reverse encode order:
+     * undo transform nodes mechanically, then Translate <lang> → English via AI.
+     * Carriers are not decoded here (caller should use full AI decode or extract text first).
+     */
+    function runStagedRecipeDecodeAsync(recipe, text, opts) {
+        if (!recipe || recipe.kind !== 'staged') {
+            return Promise.reject(new Error('Not a staged recipe.'));
+        }
+        if (recipe.stages && recipe.stages.carrier) {
+            return Promise.reject(new Error('Carrier recipes need AI decode or a text payload.'));
+        }
+        var nodes = getStagedNodes(recipe).slice().reverse();
+        return nodes.reduce(function(pending, node) {
+            return pending.then(function(acc) {
+                if (node && node.type === 'translate') {
+                    return runTranslateToEnglishNode(node, acc, opts);
+                }
+                if (node && typeof node.transform === 'string') {
+                    return reverseNode(node, acc);
+                }
+                return acc;
+            });
+        }, Promise.resolve(String(text || ''))).then(function(value) {
+            return { kind: 'text', value: String(value == null ? '' : value) };
+        });
+    }
+
+    function getRunnableChainNodes(chain) {
+        if (!chain) return [];
+        if (chain.kind !== 'staged') return chain.nodes || [];
+        return getStagedTransformNodes(chain);
+    }
+
+    /** Undo a chain: same nodes, back-to-front, each reversed. */
+    function reverseChainNodes(nodes, text) {
+        var list = (nodes || []).filter(nodeIsValid).slice().reverse();
+        return list.reduce(function(acc, node) {
+            try {
+                return reverseNode(node, acc);
+            } catch (e) {
+                console.warn('Chain node "' + node.transform + '" reverse failed:', e);
+                return acc;
+            }
+        }, text);
+    }
+
+    /**
+     * A staged recipe with a Translate or Carrier stage is not mechanically
+     * reversible: translation is lossy/AI-driven and carriers (QR, emoji
+     * steganography) change the medium of the output, not just its text.
+     * These stages have no `transform` key so `getRunnableChainNodes` can't
+     * see them — check the full staged node list explicitly.
+     */
+    function stagedChainHasOneWayStage(chain) {
+        if (!chain || chain.kind !== 'staged') return false;
+        var stages = chain.stages || {};
+        return !!(stages.translate || stages.carrier);
+    }
+
+    /** A chain round-trips only if every one of its nodes does. */
+    function chainIsReversible(chain) {
+        if (stagedChainHasOneWayStage(chain)) return false;
+        var nodes = getRunnableChainNodes(chain);
+        if (!nodes.length) return false;
+        return nodes.every(function(node) {
+            return nodeIsValid(node) && nodeCanReverse(node);
+        });
+    }
+
+    // ---- word splitting ---------------------------------------------------
+
+    /**
+     * Split into alternating word / non-word runs so separators survive intact.
+     * Mirrors the randomizer's splitter, which is the behavior users already
+     * see on this page.
+     */
+    function smartWordSplit(text) {
+        var segments = [];
+        var current = '';
+        var inWord = false;
+
+        for (var i = 0; i < text.length; i++) {
+            var ch = text[i];
+            var isWordChar = /[a-zA-Z0-9]/.test(ch);
+            if (isWordChar !== inWord && current) {
+                segments.push({ text: current, isWord: inWord });
+                current = '';
+            }
+            current += ch;
+            inWord = isWordChar;
+        }
+        if (current) segments.push({ text: current, isWord: inWord });
+        return segments;
+    }
+
+    /** Apply chains to successive words, wrapping around the list. */
+    function runCycle(chains, text, reverseMode) {
+        if (!chains.length) return text;
+        var wordIndex = 0;
+        return smartWordSplit(text).map(function(seg) {
+            if (!seg.isWord) return seg.text;
+            var chain = chains[wordIndex % chains.length];
+            wordIndex++;
+            try {
+                return reverseMode
+                    ? reverseChainNodes(getRunnableChainNodes(chain), seg.text)
+                    : runChainNodes(getRunnableChainNodes(chain), seg.text);
+            } catch (e) {
+                console.warn('Cycle chain "' + chain.name + '" failed:', e);
+                return seg.text;
+            }
+        }).join('');
+    }
+
+    function resolveCycleChains(cycle) {
+        var byId = {};
+        loadChains().forEach(function(c) { byId[c.id] = c; });
+        return ((cycle && cycle.chainIds) || [])
+            .map(function(id) { return byId[id]; })
+            .filter(Boolean);
+    }
+
+    // ---- registration into window.transforms -------------------------------
+
+    function unregisterAll() {
+        if (!global.transforms) return;
+        Object.keys(global.transforms).forEach(function(key) {
+            if (key.indexOf(CHAIN_PREFIX) === 0 || key.indexOf(CYCLE_PREFIX) === 0) {
+                delete global.transforms[key];
+            }
+        });
+    }
+
+    function serializeNodeOptions(options) {
+        var opts = (options && typeof options === 'object' && !Array.isArray(options)) ? options : {};
+        try {
+            return JSON.stringify(opts);
+        } catch (e) {
+            return '{}';
+        }
+    }
+
+    /** One node as "Name [key] {options}" so recipes can tell Caesar shift 3 from 7. */
+    function describeNode(node) {
+        var key = (node && typeof node.transform === 'string' && node.transform) || '?';
+        var t = lookupTransform(key);
+        var label = t ? (t.name + ' [' + key + ']') : key;
+        return label + ' ' + serializeNodeOptions(node && node.options);
+    }
+
+    /** Describe a single flattened staged node, including non-transform stages. */
+    function describeStagedNode(node) {
+        if (node && typeof node.transform === 'string') {
+            return describeNode(node);
+        }
+        if (node && node.type === 'translate') {
+            var stagesApi = global.TransformRecipeStages;
+            var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+                ? stagesApi.resolveTranslateLanguage(node.lang)
+                : { name: String(node.lang || ''), code: String(node.lang || '') };
+            return 'Translate to ' + (language.name || node.lang || '?') + ' [translate]';
+        }
+        if (node && node.type === 'qr') {
+            return 'QR code carrier [qr]';
+        }
+        if (node && node.type === 'emoji_stego') {
+            return 'Emoji steganography carrier [emoji_stego]';
+        }
+        return (node && node.type) || '?';
+    }
+
+    /**
+     * Human-readable, ordered description of every step a chain/recipe runs,
+     * used both as the registered transform's tooltip and as the AI decode
+     * hint. For staged recipes this must walk the full flattened node list
+     * (`getStagedNodes`), not just the transform-backed subset, or Translate
+     * and Carrier stages silently vanish from the description.
+     */
+    function describeChain(chain) {
+        var nodes = (chain && chain.kind === 'staged') ? getStagedNodes(chain) : getRunnableChainNodes(chain);
+        var describe = (chain && chain.kind === 'staged') ? describeStagedNode : describeNode;
+        var names = nodes.map(describe);
+        return names.join(' → ') || 'empty chain';
+    }
+
+    function registerChain(chain) {
+        var nodes = getRunnableChainNodes(chain);
+        var reversible = chainIsReversible(chain);
+        var isStaged = chain.kind === 'staged';
+        global.transforms[CHAIN_PREFIX + chain.id] = {
+            name: chain.name,
+            category: CATEGORY,
+            description: 'Chain: ' + describeChain(chain),
+            priority: 0, // excluded from blind auto-guess; still reversible when selected
+            canDecode: reversible,
+            isChain: true,
+            chainId: chain.id,
+            func: function(text) {
+                return isStaged ? runStagedRecipeSync(chain, text) : runChainNodes(nodes, text);
+            },
+            preview: function(text) {
+                return isStaged ? runStagedRecipeSync(chain, text) : runChainNodes(nodes, text);
+            },
+            reverse: reversible
+                ? function(text) { return reverseChainNodes(nodes, text); }
+                : null
+        };
+    }
+
+    /**
+     * Whether a cycle actually round-trips, decided by experiment rather than
+     * assumption.
+     *
+     * Every chain being individually reversible is NOT sufficient: decode has
+     * to re-split the output into words and realign them to chains, and a
+     * transform can emit characters that split differently than the word they
+     * came from. Base64 is the common case — "Hello" becomes "VXJ5eWI=", and
+     * the "=" reads as a separator, so the word count changes and every later
+     * word gets decoded by the wrong chain.
+     *
+     * Statically predicting that per transform is unreliable, so probe with a
+     * representative sample and only claim decodability if it survives.
+     */
+    function cycleRoundTripsCleanly(chains) {
+        if (!chains.length || !chains.every(chainIsReversible)) return false;
+        var probe = 'Hello World, Foo Bar! 42 baz';
+        try {
+            return runCycle(chains, runCycle(chains, probe, false), true) === probe;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether a chain or staged recipe can safely transform one word at a time
+     * without changing the cycle splitter's word boundaries.
+     */
+    function recipeIsWordSafe(chain) {
+        if (!chain) return false;
+        var nodes = chain.kind === 'staged' ? getStagedNodes(chain) : (chain.nodes || []);
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            if (WORD_UNSAFE_KEYS[node.transform]) return false;
+            if (node.type === 'translate' || node.type === 'qr' || node.type === 'emoji_stego') {
+                return false;
+            }
+        }
+        return cycleRoundTripsCleanly([chain]);
+    }
+
+    function registerCycle(cycle) {
+        var chains = resolveCycleChains(cycle);
+        var mode = cycle.mode === 'one_way' ? 'one_way' : 'word_safe';
+        var reversible = mode === 'word_safe' &&
+            chains.every(recipeIsWordSafe) &&
+            cycleRoundTripsCleanly(chains);
+        global.transforms[CYCLE_PREFIX + cycle.id] = {
+            name: cycle.name,
+            category: CATEGORY,
+            description: 'Per-word cycle: ' + chains.map(function(c) { return c.name; }).join(' / '),
+            priority: 0,
+            canDecode: reversible,
+            isCycle: true,
+            cycleId: cycle.id,
+            func: function(text) { return runCycle(resolveCycleChains(cycle), text, false); },
+            preview: function(text) { return runCycle(resolveCycleChains(cycle), text, false); },
+            reverse: reversible
+                ? function(text) { return runCycle(resolveCycleChains(cycle), text, true); }
+                : null
+        };
+    }
+
+    function syncTransforms() {
+        if (!global.transforms) global.transforms = {};
+        unregisterAll();
+        loadChains().forEach(registerChain);
+        loadCycles().forEach(registerCycle);
+    }
+
+    // ---- CRUD -------------------------------------------------------------
+
+    function getLastMutationError() {
+        return lastMutationError || '';
+    }
+
+    function saveChain(chain) {
+        // @legacy free-form persistence path
+        var rejection = validateChainForSave(chain);
+        if (rejection) {
+            console.warn('saveChain rejected:', rejection);
+            lastMutationError = rejection;
+            return null;
+        }
+
+        var list = loadChains();
+        var now = Date.now();
+        if (chain.id) {
+            var found = false;
+            list = list.map(function(c) {
+                if (c.id !== chain.id) return c;
+                found = true;
+                return Object.assign({}, c, chain, { kind: 'freeform', updatedAt: now });
+            });
+            if (!found) list.push(Object.assign({}, chain, {
+                kind: 'freeform',
+                createdAt: now,
+                updatedAt: now
+            }));
+        } else {
+            chain = Object.assign({}, chain, {
+                id: genId(),
+                kind: 'freeform',
+                createdAt: now,
+                updatedAt: now
+            });
+            list.push(chain);
+        }
+        if (!writeList(CHAIN_STORAGE_KEY, list)) {
+            lastMutationError = 'Could not write chains to browser storage.';
+            return null;
+        }
+        syncTransforms();
+        lastMutationError = '';
+        return chain.id;
+    }
+
+    function saveRecipe(input) {
+        lastMutationError = '';
+        var stagesApi = global.TransformRecipeStages;
+        if (!stagesApi) {
+            lastMutationError = 'Staged recipes unavailable.';
+            return null;
+        }
+        var rejection = stagesApi.validateStagedRecipe(input, global.transforms || {});
+        if (rejection) {
+            lastMutationError = rejection;
+            return null;
+        }
+
+        var list = loadChains();
+        var id = (input && input.id) || genId();
+        var now = Date.now();
+        var record = {
+            id: id,
+            name: String(input.name).trim(),
+            kind: 'staged',
+            stages: input.stages,
+            createdAt: (input && input.createdAt) || now,
+            updatedAt: now
+        };
+        var idx = list.findIndex(function(chain) { return chain.id === id; });
+        if (idx >= 0) list[idx] = Object.assign({}, list[idx], record);
+        else list.push(record);
+        if (!writeList(CHAIN_STORAGE_KEY, list)) {
+            lastMutationError = 'Could not write chains to browser storage.';
+            return null;
+        }
+        syncTransforms();
+        return id;
+    }
+
+    function deleteChain(id) {
+        var prevChains = loadChains();
+        var prevCycles = loadCycles();
+        var nextChains = prevChains.filter(function(c) { return c.id !== id; });
+        var nextCycles = prevCycles.map(function(cy) {
+            return Object.assign({}, cy, {
+                chainIds: (cy.chainIds || []).filter(function(cid) { return cid !== id; })
+            });
+        });
+
+        if (!writeList(CHAIN_STORAGE_KEY, nextChains)) {
+            lastMutationError = 'Could not write chains to browser storage.';
+            return false;
+        }
+        if (!writeList(CYCLE_STORAGE_KEY, nextCycles)) {
+            // Keep chain + cycle lists consistent if the second write fails.
+            writeList(CHAIN_STORAGE_KEY, prevChains);
+            lastMutationError = 'Could not write cycles to browser storage.';
+            return false;
+        }
+        syncTransforms();
+        lastMutationError = '';
+        return true;
+    }
+
+    function saveCycle(cycle) {
+        var rejection = validateCycleForSave(cycle);
+        if (rejection) {
+            console.warn('saveCycle rejected:', rejection);
+            lastMutationError = rejection;
+            return null;
+        }
+
+        cycle = Object.assign({}, cycle, {
+            mode: cycle.mode === 'one_way' ? 'one_way' : 'word_safe'
+        });
+        var list = loadCycles();
+        var now = Date.now();
+        if (cycle.id) {
+            var found = false;
+            list = list.map(function(c) {
+                if (c.id !== cycle.id) return c;
+                found = true;
+                return Object.assign({}, c, cycle, { updatedAt: now });
+            });
+            if (!found) list.push(Object.assign({}, cycle, { createdAt: now, updatedAt: now }));
+        } else {
+            cycle = Object.assign({}, cycle, { id: genId(), createdAt: now, updatedAt: now });
+            list.push(cycle);
+        }
+        if (!writeList(CYCLE_STORAGE_KEY, list)) {
+            lastMutationError = 'Could not write cycles to browser storage.';
+            return null;
+        }
+        syncTransforms();
+        lastMutationError = '';
+        return cycle.id;
+    }
+
+    function deleteCycle(id) {
+        var next = loadCycles().filter(function(c) { return c.id !== id; });
+        if (!writeList(CYCLE_STORAGE_KEY, next)) {
+            lastMutationError = 'Could not write cycles to browser storage.';
+            return false;
+        }
+        syncTransforms();
+        lastMutationError = '';
+        return true;
+    }
+
+    // ---- recipe keys & AI-assisted decode ----------------------------------
+
+    /**
+     * One undo step for AI / UI: reverse of encode wording.
+     * Translate undoes as "<lang> → English"; transform nodes as "Undo Name".
+     */
+    function describeDecodeStep(node) {
+        if (node && typeof node.transform === 'string') {
+            var key = node.transform;
+            var t = lookupTransform(key);
+            var label = t ? (t.name + ' [' + key + ']') : key;
+            return 'Undo ' + label + ' ' + serializeNodeOptions(node && node.options);
+        }
+        if (node && node.type === 'translate') {
+            var stagesApi = global.TransformRecipeStages;
+            var language = stagesApi && typeof stagesApi.resolveTranslateLanguage === 'function'
+                ? stagesApi.resolveTranslateLanguage(node.lang)
+                : { name: String(node.lang || ''), code: String(node.lang || '') };
+            return 'Translate ' + (language.name || node.lang || '?') + ' → English [translate]';
+        }
+        if (node && node.type === 'qr') {
+            return 'Extract payload text from QR carrier [qr]';
+        }
+        if (node && node.type === 'emoji_stego') {
+            return 'Decode emoji steganography carrier [emoji_stego]';
+        }
+        return 'Undo ' + ((node && node.type) || '?');
+    }
+
+    /** Encode-order node list for a chain or staged recipe. */
+    function getChainEncodeNodes(chain) {
+        if (!chain) return [];
+        if (chain.kind === 'staged') return getStagedNodes(chain);
+        return getRunnableChainNodes(chain);
+    }
+
+    /**
+     * Numbered undo steps in the order decode must run them (encode reversed).
+     * Encode A → B → C becomes decode: 1. Undo C, 2. Undo B, 3. Undo A.
+     */
+    function describeDecodeOrder(chain) {
+        var nodes = getChainEncodeNodes(chain).slice().reverse();
+        if (!nodes.length) return '(empty recipe)';
+        return nodes.map(function(node, i) {
+            return (i + 1) + '. ' + describeDecodeStep(node);
+        }).join('\n');
+    }
+
+    /**
+     * A human- and model-readable description of exactly what was applied.
+     *
+     * Mechanical reverse only works when every node is individually
+     * reversible, and per-word cycles often can't round-trip at all: a
+     * transform can emit characters that re-split differently (base64's "="
+     * reads as a separator), so decode can't realign words to chains. For
+     * those cases this key is handed to an LLM as the decode hint, the same
+     * way the other AI tools are driven.
+     */
+    function describeRecipe(entity, kind) {
+        if (kind === 'cycle') {
+            var chains = resolveCycleChains(entity);
+            var parts = chains.map(function(c, i) {
+                return '[' + (i + 1) + '] ' + describeChain(c);
+            });
+            return 'Per-word cycle over ' + chains.length + ' chain(s), applied to ' +
+                'successive words and wrapping around: ' + parts.join('; ');
+        }
+        return 'Sequential chain applied to the whole text: ' + describeChain(entity);
+    }
+
+    /** Decode-order recipe hint (encode steps reversed). */
+    function describeDecodeRecipe(entity, kind) {
+        if (kind === 'cycle') {
+            var chains = resolveCycleChains(entity);
+            var parts = chains.map(function(c, i) {
+                return '[' + (i + 1) + ']\n' + describeDecodeOrder(c);
+            });
+            return 'Per-word cycle decode — for each word, undo that word\'s chain ' +
+                'in reverse step order (same word→chain mapping as encode):\n' +
+                parts.join('\n');
+        }
+        return describeDecodeOrder(entity);
+    }
+
+    /** Build the decode prompt from encode + explicit reverse decode order. */
+    function buildDecodePrompt(recipeKey, text, decodeOrder) {
+        var orderBlock = decodeOrder
+            ? ('DECODE ORDER (apply these undos in this exact sequence — last encode step first):\n' +
+                decodeOrder + '\n\n')
+            : ('Undo the transformations in reverse order (last encode step first).\n\n');
+        return 'The following text was produced by applying a known sequence of ' +
+            'text transformations. Steps may include encodings, ciphers, Unicode styling, ' +
+            'and language translation (e.g. English → German).\n\n' +
+            'ENCODE ORDER (what was applied):\n' + recipeKey + '\n\n' +
+            orderBlock +
+            'Follow DECODE ORDER exactly. If a step says Translate <lang> → English, ' +
+            'you MUST produce English — do not leave foreign-language text in the result. ' +
+            'Output ONLY the recovered plaintext — no explanation, no preamble, no quotes.\n\n' +
+            'TRANSFORMED TEXT:\n' + text;
+    }
+
+    /**
+     * Ask the configured AI provider to undo a chain/cycle using its recipe key.
+     * Uses the same multi-provider client as every other AI tool, so whichever
+     * model the user picked applies here too.
+     *
+     * opts.decodeOrder — numbered undo steps (encode reversed). Strongly preferred.
+     */
+    function aiDecode(recipeKey, text, opts) {
+        opts = opts || {};
+        if (!global.AIProvider) {
+            return Promise.reject(new Error('AI provider unavailable.'));
+        }
+        var model = opts.model || global.localStorage.getItem('chain-decode-model') ||
+            global.localStorage.getItem('translate-model') || 'google/gemma-3-27b-it';
+        return global.AIProvider.chatCompletion([
+            {
+                role: 'system',
+                content: 'You are a decoding engine for layered text transformations. ' +
+                    'You undo steps in the provided DECODE ORDER (last encode step first). ' +
+                    'You output only the recovered plaintext.'
+            },
+            { role: 'user', content: buildDecodePrompt(recipeKey, text, opts.decodeOrder || '') }
+        ], {
+            model: model,
+            temperature: 0,
+            maxTokens: 4096
+        }).then(function(data) {
+            var out = data && data.choices && data.choices[0] && data.choices[0].message;
+            return ((out && out.content) || '').trim();
+        });
+    }
+
+    /** Run a chain definition without saving it — powers the builder preview. */
+    function previewNodes(nodes, text) {
+        return runChainNodes(nodes, text);
+    }
+
+    /** Per-node output, so the builder can show the text after each step. */
+    function previewSteps(nodes, text) {
+        var acc = text;
+        return (nodes || []).map(function(node) {
+            var t = lookupTransform(node.transform);
+            var before = acc;
+            var error = '';
+            if (!t) {
+                error = 'missing transform';
+            } else {
+                try {
+                    acc = t.func(acc, node.options || {});
+                } catch (e) {
+                    error = e.message || 'failed';
+                }
+            }
+            return {
+                transform: node.transform,
+                name: t ? t.name : node.transform,
+                before: before,
+                after: acc,
+                error: error
+            };
+        });
+    }
+
+    global.TransformChains = {
+        CATEGORY: CATEGORY,
+        CHAIN_PREFIX: CHAIN_PREFIX,
+        CYCLE_PREFIX: CYCLE_PREFIX,
+        loadChains: loadChains,
+        loadRecipes: loadRecipes,
+        loadCycles: loadCycles,
+        saveChain: saveChain,
+        saveRecipe: saveRecipe,
+        deleteChain: deleteChain,
+        saveCycle: saveCycle,
+        deleteCycle: deleteCycle,
+        getLastMutationError: getLastMutationError,
+        syncTransforms: syncTransforms,
+        chainIsReversible: chainIsReversible,
+        cycleRoundTripsCleanly: cycleRoundTripsCleanly,
+        recipeIsWordSafe: recipeIsWordSafe,
+        describeChain: describeChain,
+        describeRecipe: describeRecipe,
+        describeDecodeOrder: describeDecodeOrder,
+        describeDecodeRecipe: describeDecodeRecipe,
+        buildDecodePrompt: buildDecodePrompt,
+        aiDecode: aiDecode,
+        previewNodes: previewNodes,
+        previewSteps: previewSteps,
+        smartWordSplit: smartWordSplit,
+        runChainNodes: runChainNodes,
+        runStagedRecipeSync: runStagedRecipeSync,
+        applyCarrier: applyCarrier,
+        runStagedRecipeAsync: runStagedRecipeAsync,
+        runStagedRecipeDecodeAsync: runStagedRecipeDecodeAsync,
+        reverseChainNodes: reverseChainNodes,
+        runCycle: runCycle,
+        resolveCycleChains: resolveCycleChains,
+        genId: genId
+    };
+})(typeof window !== 'undefined' ? window : this);

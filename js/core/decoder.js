@@ -15,6 +15,9 @@ function universalDecode(input, context = {}) {
     
     let foundHighPriorityMatch = false;
     for (const [transformKey, transform] of Object.entries(window.transforms)) {
+        if (transform.isChain || transform.isCycle || transform.category === 'chains') {
+            continue; // only via explicit user selection / AI recipe decode
+        }
         if (transform.detector && transform.reverse) {
             try {
                 if (transform.detector(input)) {
@@ -74,6 +77,9 @@ function universalDecode(input, context = {}) {
     
     for (const name in window.transforms) {
         const transform = window.transforms[name];
+        if (transform.isChain || transform.isCycle || transform.category === 'chains') {
+            continue; // only via explicit user selection / AI recipe decode
+        }
         if (transform.reverse && !transform.detector) {
             try {
                 const opts = window.getMergedTransformOptions ? window.getMergedTransformOptions(transform) : {};

@@ -43,7 +43,15 @@ class TransformTool extends Tool {
             transformInput: 'Hello World',
             transformLexemeAnalysis: { totalFindings: 0, findings: [], summary: 'No Latin-root wording findings.' },
             transformOutput: '',
+            transformOutputImage: '',
+            transformOutputKind: 'text',
+            transformIoMode: (window.TransformApplyMode
+                ? window.TransformApplyMode.loadMode(localStorage)
+                : 'encode'),
+            transformApplyGeneration: 0,
             activeTransform: null,
+            /** True after the selected transform has been applied at least once (enables live recompute while typing). */
+            transformSelectionApplied: false,
             transforms: transforms,
             legendCategories: legendCategories, // Always alphabetical for legend
             categories: sectionCategories, // Custom order for sections
@@ -56,13 +64,55 @@ class TransformTool extends Tool {
             transformOptionsModalTransform: null,
             transformOptionsDraft: {},
             transformSearchQuery: '',
-            transformCategoryFilter: ''
+            transformCategoryFilter: '',
+
+            // Chain / cycle builder
+            chainManageOpen: false,
+            chainBuilderOpen: false,
+            chainBuilderKind: 'chain', // 'chain' | 'cycle'
+            recipeBuilderMode: 'staged', // 'staged' | 'legacy'
+            recipeTemplateId: '',
+            stagedDraft: {
+                name: '',
+                stages: {
+                    normalize: null,
+                    translate: null,
+                    obfuscate: [],
+                    present: null,
+                    conceal: null,
+                    carrier: null
+                }
+            },
+            stagedPickerStage: '',
+            stagedPickerQuery: '',
+            stagedOpenNodeOptions: null,
+            chainBuilderEditId: null,
+            chainBuilderError: '',
+            chainDraftName: '',
+            chainDraftNodes: [],
+            chainNodePickerQuery: '',
+            chainOpenNodeOptionsIndex: null,
+            cycleDraftName: '',
+            cycleDraftChainIds: [],
+            cycleDraftMode: 'word_safe',
+            chainDecodeOpenKey: '',
+            chainDecodeInput: '',
+            chainDecodeOutput: '',
+            chainDecodeLoading: false,
+            chainDecodeError: '',
+            chainDecodeModel: localStorage.getItem('chain-decode-model') || localStorage.getItem('translate-model') || ''
         };
     }
 
     buildTransformsFromWindow() {
         if (typeof window !== 'undefined' && typeof window.syncCustomSpellingAlphabets === 'function') {
             window.syncCustomSpellingAlphabets();
+        }
+
+        // Chains reference other transforms, so they must register after the
+        // built-ins (and after custom alphabets, which chains may include).
+        if (typeof window !== 'undefined' && window.TransformChains) {
+            window.TransformChains.syncTransforms();
         }
 
         if (!window.transforms || Object.keys(window.transforms).length === 0) {
@@ -80,6 +130,12 @@ class TransformTool extends Tool {
             .map(([key, transform]) => ({
                 transformKey: key,
                 customSpellingId: transform.customSpellingId || null,
+                chainId: transform.chainId || null,
+                isChain: !!transform.isChain,
+                isCycle: !!transform.isCycle,
+                cycleId: transform.cycleId || null,
+                description: transform.description || '',
+                canDecode: transform.canDecode !== false,
                 name: transform.name,
                 func: transform.func.bind(transform),
                 preview: transform.preview ? transform.preview.bind(transform) : function() { return '[preview]'; },
@@ -284,11 +340,574 @@ class TransformTool extends Tool {
                 }
                 return {};
             },
+
+            // ---- Chains & cycles -------------------------------------------
+
+            savedChains: function() {
+                return window.TransformChains ? window.TransformChains.loadChains() : [];
+            },
+            savedCycles: function() {
+                return window.TransformChains ? window.TransformChains.loadCycles() : [];
+            },
+            chainRegisteredEntry: function(chain) {
+                return window.transforms && window.transforms[window.TransformChains.CHAIN_PREFIX + chain.id];
+            },
+            cycleRegisteredEntry: function(cycle) {
+                return window.transforms && window.transforms[window.TransformChains.CYCLE_PREFIX + cycle.id];
+            },
+            chainIsReversibleNow: function(chain) {
+                const entry = this.chainRegisteredEntry(chain);
+                return !!(entry && entry.canDecode);
+            },
+            cycleIsReversibleNow: function(cycle) {
+                const entry = this.cycleRegisteredEntry(cycle);
+                return !!(entry && entry.canDecode);
+            },
+            cycleChainName: function(chainId) {
+                const chain = this.savedChains().find(c => c.id === chainId);
+                return chain ? chain.name : '(deleted chain)';
+            },
+            cycleRecipeIsWordSafe: function(chain) {
+                return !!(window.TransformChains &&
+                    typeof window.TransformChains.recipeIsWordSafe === 'function' &&
+                    window.TransformChains.recipeIsWordSafe(chain));
+            },
+            cycleChainIsWordSafe: function(chainId) {
+                return this.cycleRecipeIsWordSafe(this.savedChains().find(chain => chain.id === chainId));
+            },
+            recipeHasCarrier: function(recipe) {
+                return !!(recipe && recipe.kind === 'staged' && recipe.stages && recipe.stages.carrier);
+            },
+            refreshChainsTransforms: function() {
+                // Same rebuild custom spelling alphabets use after a CRUD change —
+                // generic over window.transforms, not spelling-specific.
+                if (typeof this.refreshCustomSpellingTransforms === 'function') {
+                    this.refreshCustomSpellingTransforms();
+                }
+            },
+
+            // -- staged recipe builder --
+
+            stagedEmptyDraft: function() {
+                return {
+                    name: '',
+                    stages: {
+                        normalize: null,
+                        translate: null,
+                        obfuscate: null,
+                        present: null,
+                        conceal: null,
+                        carrier: null
+                    }
+                };
+            },
+            recipeStageOrder: function() {
+                return window.TransformRecipeStages ? window.TransformRecipeStages.STAGE_ORDER : [];
+            },
+            recipeStageLabel: function(stageId) {
+                const labels = {
+                    normalize: 'Normalize',
+                    translate: 'Translate',
+                    obfuscate: 'Obfuscate',
+                    present: 'Present',
+                    conceal: 'Conceal',
+                    carrier: 'Carrier'
+                };
+                return labels[stageId] || stageId;
+            },
+            recipeTemplates: function() {
+                return window.TransformRecipeStages ? window.TransformRecipeStages.TEMPLATES : [];
+            },
+            recipeCarrierChoices: function() {
+                const carriers = window.steganography && Array.isArray(window.steganography.carriers)
+                    ? window.steganography.carriers
+                    : [];
+                return carriers.map(carrier => ({
+                    emoji: carrier.emoji,
+                    name: carrier.name || carrier.emoji
+                }));
+            },
+            clearRecipeTemplateSelection: function() {
+                this.recipeTemplateId = '';
+            },
+            openRecipeBuilder: function(existing) {
+                this.chainBuilderKind = 'chain';
+                this.recipeBuilderMode = 'staged';
+                this.chainBuilderEditId = existing ? existing.id : null;
+                this.stagedDraft = existing
+                    ? { name: existing.name, stages: JSON.parse(JSON.stringify(existing.stages || {})) }
+                    : this.stagedEmptyDraft();
+                this.recipeTemplateId = '';
+                this.stagedPickerStage = '';
+                this.stagedPickerQuery = '';
+                this.stagedOpenNodeOptions = null;
+                this.chainBuilderError = '';
+                // Ignore backdrop "ghost clicks" from the same tap that opened the modal.
+                this.chainBuilderOpenedAt = Date.now();
+                this.chainBuilderOpen = true;
+            },
+            applyRecipeTemplate: function(templateId) {
+                const template = this.recipeTemplates().find(t => t.id === templateId);
+                if (!template) return;
+                this.recipeTemplateId = templateId;
+                this.$set(this.stagedDraft, 'stages', JSON.parse(JSON.stringify(template.stages)));
+                this.stagedPickerStage = '';
+                this.stagedPickerQuery = '';
+                this.chainBuilderError = '';
+            },
+            stagedStageNodes: function(stageId) {
+                const nodes = this.stagedDraft && this.stagedDraft.stages
+                    ? this.stagedDraft.stages[stageId]
+                    : null;
+                return Array.isArray(nodes) ? nodes : [];
+            },
+            stagedNodeCandidates: function(stageId) {
+                if (!window.transforms || !window.TransformRecipeStages) return [];
+                const query = (this.stagedPickerQuery || '').trim().toLowerCase();
+                return Object.keys(window.transforms)
+                    .filter(key => window.TransformRecipeStages.isTransformAllowedInStage(
+                        stageId,
+                        key,
+                        window.transforms
+                    ))
+                    .map(key => ({ key, t: window.transforms[key] }))
+                    .filter(({ t }) => t && t.name && (!query || t.name.toLowerCase().indexOf(query) !== -1))
+                    .sort((a, b) => a.t.name.localeCompare(b.t.name))
+                    .map(({ key, t }) => ({ key, name: t.name, category: t.category }));
+            },
+            stagedTogglePicker: function(stageId) {
+                this.stagedPickerStage = this.stagedPickerStage === stageId ? '' : stageId;
+                this.stagedPickerQuery = '';
+            },
+            stagedAddNode: function(stageId, key) {
+                const t = window.transforms && window.transforms[key];
+                if (!t || !window.TransformRecipeStages ||
+                    !window.TransformRecipeStages.isTransformAllowedInStage(stageId, key, window.transforms)) {
+                    return;
+                }
+                const options = {};
+                const prefs = typeof this.getMergedOptionsForTransform === 'function'
+                    ? this.getMergedOptionsForTransform(t.name)
+                    : {};
+                (t.configurableOptions || []).forEach(opt => {
+                    options[opt.id] = prefs && prefs[opt.id] != null ? prefs[opt.id] : opt.default;
+                });
+                const nodes = this.stagedStageNodes(stageId).slice();
+                nodes.push({ transform: key, options });
+                this.$set(this.stagedDraft.stages, stageId, nodes);
+                this.clearRecipeTemplateSelection();
+                this.stagedPickerQuery = '';
+                this.chainBuilderError = '';
+            },
+            stagedRemoveNode: function(stageId, index) {
+                const nodes = this.stagedStageNodes(stageId).slice();
+                nodes.splice(index, 1);
+                this.$set(this.stagedDraft.stages, stageId, nodes.length ? nodes : null);
+                this.clearRecipeTemplateSelection();
+                this.stagedOpenNodeOptions = null;
+            },
+            stagedMoveNode: function(stageId, index, direction) {
+                const nodes = this.stagedStageNodes(stageId).slice();
+                const target = index + direction;
+                if (target < 0 || target >= nodes.length) return;
+                const node = nodes.splice(index, 1)[0];
+                nodes.splice(target, 0, node);
+                this.$set(this.stagedDraft.stages, stageId, nodes);
+                this.clearRecipeTemplateSelection();
+                this.stagedOpenNodeOptions = null;
+            },
+            stagedToggleNodeOptions: function(stageId, index) {
+                const open = this.stagedOpenNodeOptions;
+                this.stagedOpenNodeOptions = open && open.stageId === stageId && open.index === index
+                    ? null
+                    : { stageId, index };
+            },
+            stagedNodeOptionsOpen: function(stageId, index) {
+                const open = this.stagedOpenNodeOptions;
+                return !!(open && open.stageId === stageId && open.index === index);
+            },
+            stagedSetNodeOption: function(stageId, index, optId, value) {
+                const node = this.stagedStageNodes(stageId)[index];
+                if (node) {
+                    this.$set(node.options, optId, value);
+                    this.clearRecipeTemplateSelection();
+                }
+            },
+            stagedSetTranslateEnabled: function(enabled) {
+                this.$set(this.stagedDraft.stages, 'translate', enabled
+                    ? { type: 'translate', lang: 'la', model: this.translateModel || '' }
+                    : null);
+                this.clearRecipeTemplateSelection();
+            },
+            stagedSetCarrier: function(type) {
+                this.$set(this.stagedDraft.stages, 'carrier', type
+                    ? { type, options: type === 'emoji_stego' ? { carrierEmoji: '🐍' } : {} }
+                    : null);
+                this.clearRecipeTemplateSelection();
+            },
+            stagedSetCarrierEmoji: function(emoji) {
+                const carrier = this.stagedDraft.stages.carrier;
+                if (!carrier || carrier.type !== 'emoji_stego') return;
+                this.$set(carrier.options, 'carrierEmoji', emoji);
+                this.clearRecipeTemplateSelection();
+            },
+            saveStagedRecipe: function() {
+                const draft = {
+                    id: this.chainBuilderEditId,
+                    name: (this.stagedDraft.name || '').trim(),
+                    kind: 'staged',
+                    stages: this.stagedDraft.stages
+                };
+                const id = window.TransformChains.saveRecipe(draft);
+                if (!id) {
+                    this.chainBuilderError = window.TransformChains.getLastMutationError() ||
+                        'Could not save recipe.';
+                    return;
+                }
+                this.chainBuilderOpen = false;
+                this.refreshChainsTransforms();
+                this.showNotification('Recipe saved — find it in the transform list and click it (with text in the input)', 'success', 'fas fa-link');
+            },
+
+            // -- LEGACY_FREEFORM_BUILDER: remove with free-form chain support --
+
+            chainNodeCandidates: function() {
+                if (!window.transforms) return [];
+                const query = (this.chainNodePickerQuery || '').trim().toLowerCase();
+                return Object.keys(window.transforms)
+                    .map(key => ({ key, t: window.transforms[key] }))
+                    .filter(({ t }) => t && t.name && !t.isChain && !t.isCycle)
+                    .filter(({ t }) => !query || t.name.toLowerCase().indexOf(query) !== -1)
+                    .sort((a, b) => a.t.name.localeCompare(b.t.name))
+                    .map(({ key, t }) => ({ key, name: t.name, category: t.category }));
+            },
+            openChainBuilder: function(existing) {
+                if (existing && existing.kind === 'staged') {
+                    this.openRecipeBuilder(existing);
+                    return;
+                }
+                this.chainBuilderKind = 'chain';
+                this.recipeBuilderMode = 'legacy';
+                this.chainBuilderEditId = existing ? existing.id : null;
+                this.chainDraftName = existing ? existing.name : '';
+                this.chainDraftNodes = existing ? JSON.parse(JSON.stringify(existing.nodes || [])) : [];
+                this.chainNodePickerQuery = '';
+                this.chainOpenNodeOptionsIndex = null;
+                this.chainBuilderError = '';
+                this.chainBuilderOpenedAt = Date.now();
+                this.chainBuilderOpen = true;
+            },
+            setLegacyFreeformBuilder: function(enabled) {
+                // LEGACY_FREEFORM_BUILDER: explicit escape hatch for unrestricted transform stacks.
+                if (enabled) this.openChainBuilder(null);
+            },
+            chainAddNode: function(key) {
+                const t = window.transforms[key];
+                if (!t) return;
+                const options = {};
+                const prefs = typeof this.getMergedOptionsForTransform === 'function'
+                    ? this.getMergedOptionsForTransform(t.name)
+                    : {};
+                (t.configurableOptions || []).forEach(opt => {
+                    options[opt.id] = (prefs && prefs[opt.id] != null) ? prefs[opt.id] : opt.default;
+                });
+                this.chainDraftNodes.push({ transform: key, options });
+                this.chainNodePickerQuery = '';
+            },
+            chainRemoveNode: function(index) {
+                this.chainDraftNodes.splice(index, 1);
+                if (this.chainOpenNodeOptionsIndex === index) {
+                    this.chainOpenNodeOptionsIndex = null;
+                }
+            },
+            chainMoveNode: function(index, direction) {
+                const target = index + direction;
+                if (target < 0 || target >= this.chainDraftNodes.length) return;
+                const nodes = this.chainDraftNodes.slice();
+                const tmp = nodes[index];
+                nodes.splice(index, 1);
+                nodes.splice(target, 0, tmp);
+                this.chainDraftNodes = nodes;
+                if (this.chainOpenNodeOptionsIndex === index) {
+                    this.chainOpenNodeOptionsIndex = target;
+                }
+            },
+            chainToggleNodeOptions: function(index) {
+                this.chainOpenNodeOptionsIndex = this.chainOpenNodeOptionsIndex === index ? null : index;
+            },
+            chainNodeName: function(node) {
+                const t = window.transforms && window.transforms[node.transform];
+                return t ? t.name : node.transform + ' (missing)';
+            },
+            chainNodeOptionFields: function(node) {
+                const t = window.transforms && window.transforms[node.transform];
+                return (t && t.configurableOptions) || [];
+            },
+            chainSetNodeOption: function(index, optId, value) {
+                this.$set(this.chainDraftNodes[index].options, optId, value);
+            },
+            chainDraftPreviewSteps: function() {
+                if (!window.TransformChains) return [];
+                const sample = (this.transformInput || 'Hello World').slice(0, 60);
+                return window.TransformChains.previewSteps(this.chainDraftNodes, sample);
+            },
+            saveChainDraft: function() {
+                const name = (this.chainDraftName || '').trim();
+                if (!name) {
+                    this.chainBuilderError = 'Name is required.';
+                    return;
+                }
+                if (!this.chainDraftNodes.length) {
+                    this.chainBuilderError = 'Add at least one transform to the chain.';
+                    return;
+                }
+                const id = window.TransformChains.saveChain({
+                    id: this.chainBuilderEditId,
+                    name,
+                    nodes: this.chainDraftNodes
+                });
+                if (!id) {
+                    this.chainBuilderError = window.TransformChains.getLastMutationError() ||
+                        'Could not save chain.';
+                    return;
+                }
+                this.chainBuilderOpen = false;
+                this.refreshChainsTransforms();
+                this.showNotification('Chain saved — find it on the Transforms page under chains', 'success', 'fas fa-link');
+            },
+
+            // -- cycle (per-word rotation) builder --
+
+            openCycleBuilder: function(existing) {
+                this.chainBuilderKind = 'cycle';
+                this.chainBuilderEditId = existing ? existing.id : null;
+                this.cycleDraftName = existing ? existing.name : '';
+                this.cycleDraftChainIds = existing ? existing.chainIds.slice() : [];
+                this.cycleDraftMode = existing && existing.mode === 'one_way' ? 'one_way' : 'word_safe';
+                this.chainBuilderError = '';
+                this.chainBuilderOpenedAt = Date.now();
+                this.chainBuilderOpen = true;
+            },
+            cycleAddChainRef: function(chainId) {
+                if (!chainId) return;
+                this.cycleDraftChainIds.push(chainId);
+            },
+            cycleRemoveChainRef: function(index) {
+                this.cycleDraftChainIds.splice(index, 1);
+            },
+            cycleMoveChainRef: function(index, direction) {
+                const target = index + direction;
+                if (target < 0 || target >= this.cycleDraftChainIds.length) return;
+                const ids = this.cycleDraftChainIds.slice();
+                const tmp = ids[index];
+                ids.splice(index, 1);
+                ids.splice(target, 0, tmp);
+                this.cycleDraftChainIds = ids;
+            },
+            cycleDraftPreview: function() {
+                if (!window.TransformChains || !this.cycleDraftChainIds.length) return '';
+                const chains = this.cycleDraftChainIds
+                    .map(id => this.savedChains().find(c => c.id === id))
+                    .filter(Boolean);
+                if (!chains.length) return '';
+                const sample = this.transformInput || 'Hello World Foo Bar';
+                try {
+                    return window.TransformChains.runCycle(chains, sample, false);
+                } catch (e) {
+                    return '(preview failed: ' + e.message + ')';
+                }
+            },
+            saveCycleDraft: function() {
+                const name = (this.cycleDraftName || '').trim();
+                if (!name) {
+                    this.chainBuilderError = 'Name is required.';
+                    return;
+                }
+                if (!this.cycleDraftChainIds.length) {
+                    this.chainBuilderError = 'Add at least one chain to rotate through.';
+                    return;
+                }
+                const id = window.TransformChains.saveCycle({
+                    id: this.chainBuilderEditId,
+                    name,
+                    chainIds: this.cycleDraftChainIds,
+                    mode: this.cycleDraftMode
+                });
+                if (!id) {
+                    this.chainBuilderError = window.TransformChains.getLastMutationError() ||
+                        'Could not save cycle.';
+                    return;
+                }
+                this.chainBuilderOpen = false;
+                this.refreshChainsTransforms();
+                this.showNotification('Cycle saved — find it on the Transforms page under chains', 'success', 'fas fa-repeat');
+            },
+
+            closeChainBuilder: function() {
+                // Same-tap backdrop closes look like "the button does nothing".
+                if (Date.now() - (this.chainBuilderOpenedAt || 0) < 400) return;
+                this.chainBuilderOpen = false;
+                this.chainBuilderError = '';
+            },
+            deleteSavedChain: function(chain) {
+                if (!window.confirm('Delete chain "' + chain.name + '"? Any cycle using it will drop the reference.')) return;
+                const ok = window.TransformChains.deleteChain(chain.id);
+                if (!ok) {
+                    this.showNotification(
+                        window.TransformChains.getLastMutationError() || 'Could not delete chain.',
+                        'error',
+                        'fas fa-exclamation-triangle'
+                    );
+                    return;
+                }
+                this.refreshChainsTransforms();
+                this.pruneFavoritesForMissingTransforms();
+                this.showNotification('Chain deleted', 'success', 'fas fa-trash');
+            },
+            deleteSavedCycle: function(cycle) {
+                if (!window.confirm('Delete cycle "' + cycle.name + '"?')) return;
+                const ok = window.TransformChains.deleteCycle(cycle.id);
+                if (!ok) {
+                    this.showNotification(
+                        window.TransformChains.getLastMutationError() || 'Could not delete cycle.',
+                        'error',
+                        'fas fa-exclamation-triangle'
+                    );
+                    return;
+                }
+                this.refreshChainsTransforms();
+                this.pruneFavoritesForMissingTransforms();
+                this.showNotification('Cycle deleted', 'success', 'fas fa-trash');
+            },
+            chainCopyRecipe: function(entity, kind) {
+                const recipe = window.TransformChains.describeRecipe(entity, kind);
+                this.copyToClipboard(recipe);
+                this.showNotification('Recipe copied', 'success', 'fas fa-copy');
+            },
+            chainExportAll: function() {
+                const payload = {
+                    version: 1,
+                    chains: window.TransformChains.loadChains(),
+                    cycles: window.TransformChains.loadCycles()
+                };
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'p4rs3ltongv3-chains.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            },
+            chainImportAll: function(file) {
+                const reader = new FileReader();
+                const self = this;
+                reader.onload = function() {
+                    try {
+                        const data = JSON.parse(reader.result);
+                        let importedCount = 0;
+                        let failedCount = 0;
+                        const mutationErrors = [];
+                        const recordSaveResult = function(result) {
+                            if (result) {
+                                importedCount += 1;
+                                return;
+                            }
+                            failedCount += 1;
+                            if (typeof window.TransformChains.getLastMutationError === 'function') {
+                                const mutationError = window.TransformChains.getLastMutationError();
+                                if (mutationError && mutationErrors.indexOf(mutationError) === -1) {
+                                    mutationErrors.push(mutationError);
+                                }
+                            }
+                        };
+                        (data.chains || []).forEach(function(c) {
+                            const result = c && c.kind === 'staged'
+                                ? window.TransformChains.saveRecipe(c)
+                                : window.TransformChains.saveChain({
+                                    id: c.id,
+                                    name: c.name,
+                                    nodes: c.nodes
+                                });
+                            recordSaveResult(result);
+                        });
+                        (data.cycles || []).forEach(function(cy) {
+                            const result = window.TransformChains.saveCycle({
+                                id: cy.id,
+                                name: cy.name,
+                                chainIds: cy.chainIds,
+                                mode: cy.mode
+                            });
+                            recordSaveResult(result);
+                        });
+                        self.refreshChainsTransforms();
+                        if (failedCount) {
+                            let message = 'Import incomplete: ' + importedCount + ' imported, ' +
+                                failedCount + ' failed';
+                            if (mutationErrors.length) {
+                                message += '. ' + mutationErrors.join('; ');
+                            }
+                            self.showNotification(message, 'error', 'fas fa-exclamation-triangle');
+                            return;
+                        }
+                        self.showNotification('Chains imported', 'success', 'fas fa-file-import');
+                    } catch (e) {
+                        self.showNotification('Import failed: ' + (e.message || 'invalid file'), 'error');
+                    }
+                };
+                reader.readAsText(file);
+            },
+
+            // -- AI-assisted decode for chains/cycles that can't mechanically reverse --
+
+            chainDecodeKey: function(kind, id) {
+                return kind + ':' + id;
+            },
+            chainToggleDecode: function(kind, id) {
+                const key = this.chainDecodeKey(kind, id);
+                this.chainDecodeOpenKey = this.chainDecodeOpenKey === key ? '' : key;
+                this.chainDecodeInput = '';
+                this.chainDecodeOutput = '';
+                this.chainDecodeError = '';
+            },
+            chainRunAiDecode: function(entity, kind) {
+                if (!window.TransformChains) return;
+                this.chainDecodeError = '';
+                this.chainDecodeOutput = '';
+                if (!(this.chainDecodeInput || '').trim()) {
+                    this.chainDecodeError = 'Paste the transformed text first.';
+                    return;
+                }
+                const recipe = window.TransformChains.describeRecipe(entity, kind);
+                const decodeOrder = window.TransformChains.describeDecodeRecipe
+                    ? window.TransformChains.describeDecodeRecipe(entity, kind)
+                    : '';
+                if (this.chainDecodeModel) {
+                    localStorage.setItem('chain-decode-model', this.chainDecodeModel);
+                }
+                this.chainDecodeLoading = true;
+                window.TransformChains.aiDecode(recipe, this.chainDecodeInput, {
+                    model: this.chainDecodeModel,
+                    decodeOrder: decodeOrder
+                })
+                    .then(text => { this.chainDecodeOutput = text; })
+                    .catch(e => { this.chainDecodeError = e.message || 'Decode failed.'; })
+                    .finally(() => { this.chainDecodeLoading = false; });
+            },
             transformInputControlKind: function() {
                 if (!this.activeTransform || this.activeTransform.inputKind !== 'text') {
                     return 'textarea';
                 }
                 return 'text';
+            },
+            setTransformIoMode: function(mode) {
+                if (!window.TransformApplyMode) return;
+                const next = window.TransformApplyMode.normalizeMode(mode);
+                if (next === this.transformIoMode) return;
+                this.transformIoMode = next;
+                window.TransformApplyMode.saveMode(localStorage, next);
+                // Do not auto-apply on mode flip — user applies via Transform/Decode
+                // button or a second click on the selected tile.
+                this.transformSelectionApplied = false;
             },
             transformRefreshLexemeAnalysis: function() {
                 if (typeof window === 'undefined' || !window.LexemeAnalysis || typeof window.LexemeAnalysis.analyze !== 'function') {
@@ -386,8 +1005,7 @@ class TransformTool extends Tool {
                 this.showNotification('Options saved', 'success', 'fas fa-gear');
                 this.closeTransformOptions();
                 if (this.activeTransform && this.activeTransform.name === name && this.transformInput) {
-                    const opts = this.getMergedOptionsForTransform(name);
-                    this.transformOutput = this.activeTransform.func(this.transformInput, opts);
+                    this.applyActiveTransformOutput();
                 }
             },
             getTransformsByCategory: function(category) {
@@ -498,53 +1116,224 @@ class TransformTool extends Tool {
             isSpecialCategory: function(category) {
                 return category === 'randomizer';
             },
-            applyTransform: function(transform, event) {
+            stagedRecipeForTransform: function(transform) {
+                if (!transform || !transform.chainId || !window.TransformChains) {
+                    return null;
+                }
+                return window.TransformChains.loadRecipes().find(function(recipe) {
+                    return recipe.id === transform.chainId && recipe.kind === 'staged';
+                }) || null;
+            },
+            stagedRecipeNeedsAsync: function(recipe) {
+                const stages = recipe && recipe.stages;
+                return !!(stages && (stages.translate || stages.carrier));
+            },
+            applyActiveTransformOutput: async function(options) {
+                const generation = ++this.transformApplyGeneration;
+                const transform = this.activeTransform;
+                const input = this.transformInput;
+                const preserveEmojis = !!(options && options.preserveEmojis);
+                const copyOnSuccess = !!(options && options.copyOnSuccess);
+                // AI decode bills a live API call, so it must only run for an explicit
+                // user gesture (click, or mode-flip re-apply via applyTransform) — never
+                // from @input typing, the transformInput watcher, options save, or a tab
+                // refresh, all of which call this method with neither flag set.
+                const allowAiDecode = !!(options && (options.allowAiDecode || options.copyOnSuccess));
+
+                if (!transform || !input || this.activeTab !== 'transforms') {
+                    this.transformOutputKind = 'text';
+                    this.transformOutput = '';
+                    this.transformOutputImage = '';
+                    return { applied: false };
+                }
+
+                const opts = this.getMergedOptionsForTransform(transform.name);
+                const stagedRecipe = this.stagedRecipeForTransform(transform);
+                const action = window.TransformApplyMode
+                    ? window.TransformApplyMode.resolveAction(transform, this.transformIoMode)
+                    : 'encode';
+
+                if (action === 'ai_decode' && !allowAiDecode) {
+                    return { applied: false };
+                }
+
+                try {
+                    let result = { kind: 'text', value: '' };
+
+                    if (action === 'ai_decode') {
+                        if (!window.AIProvider || typeof window.AIProvider.getConfiguredProviders !== 'function'
+                            || !window.AIProvider.getConfiguredProviders().length) {
+                            throw new Error('Configure an AI provider in Settings to decode this transform.');
+                        }
+                        // Prefer hybrid decode for staged recipes: undo transforms
+                        // mechanically (last→first), then AI-translate back to English.
+                        // Full-prompt AI decode often no-ops on circled/styled Unicode.
+                        if (stagedRecipe && !(stagedRecipe.stages && stagedRecipe.stages.carrier)
+                            && typeof window.TransformChains.runStagedRecipeDecodeAsync === 'function') {
+                            result = await window.TransformChains.runStagedRecipeDecodeAsync(
+                                stagedRecipe,
+                                input,
+                                opts
+                            );
+                        } else {
+                            const recipe = window.TransformApplyMode.describeForAiDecode(transform, window.TransformChains);
+                            const decodeOrder = window.TransformApplyMode.describeDecodeOrderForAi
+                                ? window.TransformApplyMode.describeDecodeOrderForAi(transform, window.TransformChains)
+                                : '';
+                            const text = await window.TransformChains.aiDecode(recipe, input, {
+                                model: this.chainDecodeModel || localStorage.getItem('chain-decode-model') || '',
+                                decodeOrder: decodeOrder
+                            });
+                            result = { kind: 'text', value: text };
+                        }
+                    } else if (action === 'reverse') {
+                        if (typeof transform.reverse !== 'function') {
+                            throw new Error('No reverse function available.');
+                        }
+                        result = { kind: 'text', value: String(transform.reverse(input, opts) || '') };
+                    } else if (this.stagedRecipeNeedsAsync(stagedRecipe)) {
+                        result = await window.TransformChains.runStagedRecipeAsync(stagedRecipe, input, opts);
+                    } else if (preserveEmojis) {
+                        const segments = window.EmojiUtils.splitEmojis(input);
+                        const value = window.EmojiUtils.joinEmojis(segments.map(segment => {
+                            if (segment.length > 1 || /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(segment)) {
+                                return segment;
+                            }
+                            return transform.func(segment, opts);
+                        }));
+                        result = { kind: 'text', value };
+                    } else {
+                        result = { kind: 'text', value: transform.func(input, opts) };
+                    }
+
+                    if (generation !== this.transformApplyGeneration || this.activeTransform !== transform) {
+                        return { applied: false, stale: true };
+                    }
+
+                    if (result && result.kind === 'image') {
+                        this.transformOutputKind = 'image';
+                        this.transformOutputImage = result.value != null ? String(result.value) : '';
+                        this.transformOutput = result.text != null ? String(result.text) : '';
+                    } else {
+                        this.transformOutputKind = 'text';
+                        this.transformOutputImage = '';
+                        this.transformOutput = result && result.value != null ? String(result.value) : '';
+                    }
+
+                    if (copyOnSuccess && this.transformOutput) {
+                        this.isTransformCopy = true;
+                        this.forceCopyToClipboard(this.transformOutput);
+                    }
+
+                    return { applied: true, kind: this.transformOutputKind };
+                } catch (e) {
+                    if (generation !== this.transformApplyGeneration || this.activeTransform !== transform) {
+                        return { applied: false, stale: true };
+                    }
+                    this.transformOutputKind = 'text';
+                    this.transformOutput = '';
+                    this.transformOutputImage = '';
+                    this.showNotification(
+                        (e && e.message) ? e.message : (transform.name + ' failed.'),
+                        'error',
+                        'fas fa-exclamation-triangle'
+                    );
+                    return { applied: false, error: e };
+                }
+            },
+            isTransformSelected: function(transform) {
+                if (!this.activeTransform || !transform) return false;
+                if (this.activeTransform.transformKey && transform.transformKey) {
+                    return this.activeTransform.transformKey === transform.transformKey;
+                }
+                return this.activeTransform.name === transform.name;
+            },
+            selectOrApplyTransform: async function(transform, event) {
+                event && event.preventDefault();
+                event && event.stopPropagation();
+                if (!transform) return;
+
+                if (this.isTransformSelected(transform)) {
+                    return this.applyTransform(transform, event);
+                }
+
+                this.activeTransform = transform;
+                this.transformSelectionApplied = false;
+                this.showNotification(
+                    transform.name + ' selected — click again or press Transform to apply',
+                    'info',
+                    'fas fa-hand-pointer'
+                );
+            },
+            applySelectedTransform: async function(event) {
+                if (!this.activeTransform) {
+                    this.showNotification('Select a method or recipe below first.', 'info', 'fas fa-hand-pointer');
+                    return;
+                }
+                return this.applyTransform(this.activeTransform, event);
+            },
+            applyTransform: async function(transform, event) {
                 event && event.preventDefault();
                 event && event.stopPropagation();
                 
                 if (transform && transform.name === 'Random Mix') {
                     this.triggerRandomizerChaos();
                 }
-                
-                if (this.transformInput) {
-                    this.activeTransform = transform;
-                    
-                    // Track last used
-                    this.saveLastUsedTransform(transform.name);
-                    
-                    if (transform.name === 'Random Mix') {
-                        this.transformOutput = window.transforms.randomizer.func(this.transformInput);
-                        const transformInfo = window.transforms.randomizer.getLastTransformInfo();
-                        if (transformInfo.length > 0) {
-                            const transformsList = transformInfo.map(t => t.transformName).join(', ');
-                            this.showNotification(`Mixed with: ${transformsList}`, 'success', 'fas fa-random');
-                        }
-                    } else {
-                        const opts = this.getMergedOptionsForTransform(transform.name);
-                        this.transformOutput = transform.func(this.transformInput, opts);
-                    }
-                    
-                    this.isTransformCopy = true;
-                    this.forceCopyToClipboard(this.transformOutput);
-                    
-                    if (transform.name !== 'Random Mix') {
-                        this.showNotification(`${transform.name} applied and copied!`, 'success', 'fas fa-check');
-                    }
-                    
+
+                if (!transform) return;
+
+                this.activeTransform = transform;
+
+                if (!this.transformInput) {
+                    this.showNotification('Enter text in the input box, then click Transform.', 'info', 'fas fa-keyboard');
                     document.querySelectorAll('.transform-button').forEach(button => {
                         button.classList.remove('active');
                     });
-                    
                     const inputBox = document.querySelector('#transform-input');
                     if (inputBox) {
                         this.focusWithoutScroll(inputBox);
-                        const len = inputBox.value.length;
-                        try { inputBox.setSelectionRange(len, len); } catch (_) {}
                     }
-                    
-                    this.isTransformCopy = false;
-                    this.ignoreKeyboardEvents = false;
+                    return;
                 }
+
+                // Track last used
+                this.saveLastUsedTransform(transform.name);
+                
+                const outcome = await this.applyActiveTransformOutput({ copyOnSuccess: true, allowAiDecode: true });
+                if (!outcome.applied) {
+                    return;
+                }
+
+                this.transformSelectionApplied = true;
+
+                if (transform.name === 'Random Mix') {
+                    const transformInfo = window.transforms.randomizer.getLastTransformInfo();
+                    if (transformInfo.length > 0) {
+                        const transformsList = transformInfo.map(t => t.transformName).join(', ');
+                        this.showNotification(`Mixed with: ${transformsList}`, 'success', 'fas fa-random');
+                    }
+                }
+                
+                if (transform.name !== 'Random Mix') {
+                    const message = this.transformOutputKind === 'image' && !this.transformOutput
+                        ? `${transform.name} image preview ready!`
+                        : `${transform.name}${this.transformIoMode === 'decode' ? ' decoded and copied!' : ' applied and copied!'}`;
+                    this.showNotification(message, 'success', 'fas fa-check');
+                }
+                
+                document.querySelectorAll('.transform-button').forEach(button => {
+                    button.classList.remove('active');
+                });
+                
+                const inputBox = document.querySelector('#transform-input');
+                if (inputBox) {
+                    this.focusWithoutScroll(inputBox);
+                    const len = inputBox.value.length;
+                    try { inputBox.setSelectionRange(len, len); } catch (_) {}
+                }
+                
+                this.isTransformCopy = false;
+                this.ignoreKeyboardEvents = false;
             },
             saveLastUsedTransform: function(transformName) {
                 try {
@@ -694,6 +1483,22 @@ class TransformTool extends Tool {
                     console.warn('Failed to save favorites:', e);
                 }
             },
+            pruneFavoritesForMissingTransforms: function() {
+                if (!Array.isArray(this.favorites) || !this.favorites.length) return;
+                const names = {};
+                (this.transforms || []).forEach(function(t) {
+                    if (t && t.name) names[t.name] = true;
+                });
+                const next = this.favorites.filter(function(f) {
+                    if (typeof f === 'string') return !!names[f];
+                    return true; // keep translate favorites objects
+                });
+                if (next.length !== this.favorites.length) {
+                    this.favorites = next;
+                    this.showFavorites = next.length > 0;
+                    this.saveFavorites(next);
+                }
+            },
             moveCategoryUp: function(categoryIndex) {
                 if (categoryIndex <= 0) return;
                 
@@ -734,16 +1539,8 @@ class TransformTool extends Tool {
                 }
             },
             autoTransform: function() {
-                if (this.transformInput && this.activeTransform && this.activeTab === 'transforms') {
-                    const opts = this.getMergedOptionsForTransform(this.activeTransform.name);
-                    const segments = window.EmojiUtils.splitEmojis(this.transformInput);
-                    const transformedSegments = segments.map(segment => {
-                        if (segment.length > 1 || /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}]/u.test(segment)) {
-                            return segment;
-                        }
-                        return this.activeTransform.func(segment, opts);
-                    });
-                    this.transformOutput = window.EmojiUtils.joinEmojis(transformedSegments);
+                if (this.transformInput && this.activeTransform && this.transformSelectionApplied && this.activeTab === 'transforms') {
+                    this.applyActiveTransformOutput({ preserveEmojis: true });
                 }
             },
             refreshCustomSpellingTransforms: function() {
@@ -756,6 +1553,10 @@ class TransformTool extends Tool {
                     return t.category === 'custom_spelling';
                 }).length;
 
+                const previousKey = this.activeTransform && this.activeTransform.transformKey
+                    ? this.activeTransform.transformKey
+                    : null;
+
                 this.transforms = transformTool.buildTransformsFromWindow();
                 const categories = transformTool.rebuildTransformCategories(this.transforms);
                 this.legendCategories = categories.legendCategories;
@@ -767,6 +1568,24 @@ class TransformTool extends Tool {
                 if (nextCustomCount !== previousCustomCount) {
                     this.saveCategoryOrder(this.categories);
                 }
+
+                if (!previousKey) {
+                    this.activeTransform = null;
+                } else {
+                    const match = this.transforms.find(function(t) {
+                        return t.transformKey === previousKey;
+                    });
+                    this.activeTransform = match || null;
+                    if (match && this.transformInput && this.transformSelectionApplied && this.activeTab === 'transforms') {
+                        this.applyActiveTransformOutput();
+                    } else if (!match) {
+                        ++this.transformApplyGeneration;
+                        this.transformOutputKind = 'text';
+                        this.transformOutput = '';
+                        this.transformOutputImage = '';
+                    }
+                }
+                this.pruneFavoritesForMissingTransforms();
             },
         };
     }
@@ -777,9 +1596,8 @@ class TransformTool extends Tool {
                 if (typeof this.transformRefreshLexemeAnalysis === 'function') {
                     this.transformRefreshLexemeAnalysis();
                 }
-                if (this.activeTransform && this.activeTab === 'transforms') {
-                    const opts = this.getMergedOptionsForTransform(this.activeTransform.name);
-                    this.transformOutput = this.activeTransform.func(this.transformInput, opts);
+                if (this.activeTransform && this.transformSelectionApplied && this.activeTab === 'transforms') {
+                    this.applyActiveTransformOutput();
                 }
             },
             transformOptionsModalOpen(val) {
